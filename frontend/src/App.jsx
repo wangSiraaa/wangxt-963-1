@@ -10,6 +10,10 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   SwapOutlined,
+  FundOutlined,
+  FileTextOutlined,
+  TeamOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import Dashboard from './pages/Dashboard';
 import Leads from './pages/Leads';
@@ -18,6 +22,8 @@ import Feedbacks from './pages/Feedbacks';
 import Coupons from './pages/Coupons';
 import Enrollments from './pages/Enrollments';
 import Waitlists from './pages/Waitlists';
+import Funnel from './pages/Funnel';
+import RuleExplanations from './pages/RuleExplanations';
 import RoleSwitch from './pages/RoleSwitch';
 
 const { Header, Sider, Content } = Layout;
@@ -30,6 +36,8 @@ const menuItems = [
   { key: '/enrollments', icon: <CheckCircleOutlined />, label: '报名管理' },
   { key: '/waitlists', icon: <ClockCircleOutlined />, label: '候补管理' },
   { key: '/coupons', icon: <TagOutlined />, label: '优惠券' },
+  { key: '/funnel', icon: <BarChartOutlined />, label: '转正漏斗' },
+  { key: '/rules', icon: <FileTextOutlined />, label: '规则解释' },
 ];
 
 export default function App() {
@@ -66,6 +74,8 @@ export default function App() {
             <Route path="/enrollments" element={<Enrollments role={role} />} />
             <Route path="/waitlists" element={<Waitlists role={role} />} />
             <Route path="/coupons" element={<Coupons role={role} />} />
+            <Route path="/funnel" element={<Funnel role={role} />} />
+            <Route path="/rules" element={<RuleExplanations role={role} />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Content>
