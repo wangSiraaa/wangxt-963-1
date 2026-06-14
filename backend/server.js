@@ -422,6 +422,188 @@ function createTables() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS follow_up_records (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT NOT NULL,
+      follow_type TEXT DEFAULT 'phone',
+      follow_date TEXT NOT NULL,
+      follow_content TEXT,
+      result TEXT,
+      next_plan TEXT,
+      next_follow_date TEXT,
+      intention_level TEXT,
+      follow_up_by TEXT,
+      created_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS referrals (
+      id TEXT PRIMARY KEY,
+      referrer_lead_id TEXT,
+      referrer_student_name TEXT,
+      referred_lead_id TEXT NOT NULL,
+      referred_student_name TEXT,
+      referrer_type TEXT DEFAULT 'student',
+      reward_status TEXT DEFAULT 'pending',
+      reward_amount REAL DEFAULT 0,
+      relation TEXT,
+      remark TEXT,
+      created_by TEXT,
+      created_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS intention_changes (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT NOT NULL,
+      student_name TEXT,
+      old_intention TEXT,
+      new_intention TEXT,
+      change_reason TEXT,
+      old_course_id TEXT,
+      new_course_id TEXT,
+      change_source TEXT DEFAULT 'consultant',
+      changed_by TEXT,
+      created_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS fee_arrears (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT,
+      student_name TEXT NOT NULL,
+      enrollment_id TEXT,
+      course_id TEXT,
+      course_name TEXT,
+      arrears_amount REAL NOT NULL,
+      paid_amount REAL DEFAULT 0,
+      remaining_amount REAL NOT NULL,
+      due_date TEXT,
+      status TEXT DEFAULT 'unpaid',
+      remark TEXT,
+      created_by TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS class_drop_records (
+      id TEXT PRIMARY KEY,
+      enrollment_id TEXT NOT NULL,
+      student_name TEXT,
+      course_id TEXT,
+      course_name TEXT,
+      drop_date TEXT NOT NULL,
+      drop_reason TEXT,
+      refund_amount REAL DEFAULT 0,
+      operator TEXT,
+      auto_trigger_waitlist INTEGER DEFAULT 1,
+      created_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS course_intentions (
+      id TEXT PRIMARY KEY,
+      lead_id TEXT NOT NULL,
+      student_name TEXT,
+      course_id TEXT NOT NULL,
+      course_name TEXT,
+      intention_level TEXT DEFAULT 'normal',
+      priority_order INTEGER DEFAULT 1,
+      source TEXT,
+      remark TEXT,
+      status TEXT DEFAULT 'active',
+      created_by TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS coupon_quotas (
+      id TEXT PRIMARY KEY,
+      coupon_id TEXT NOT NULL,
+      total_quota INTEGER DEFAULT 0,
+      used_quota INTEGER DEFAULT 0,
+      remaining_quota INTEGER DEFAULT 0,
+      course_id TEXT,
+      valid_from TEXT,
+      valid_to TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS trial_reschedules (
+      id TEXT PRIMARY KEY,
+      trial_id TEXT NOT NULL,
+      student_name TEXT,
+      original_trial_date TEXT,
+      original_trial_time TEXT,
+      original_campus_id TEXT,
+      original_campus_name TEXT,
+      original_teacher_id TEXT,
+      original_teacher_name TEXT,
+      new_trial_date TEXT,
+      new_trial_time TEXT,
+      new_campus_id TEXT,
+      new_campus_name TEXT,
+      new_teacher_id TEXT,
+      new_teacher_name TEXT,
+      reschedule_reason TEXT,
+      reschedule_type TEXT DEFAULT 'same_campus',
+      operator TEXT,
+      created_at TEXT
+    )
+  `);
+
+  function addColumnIfNotExists(tableName, columnDef) {
+    try {
+      const columnName = columnDef.split(' ')[0];
+      const cols = db.exec(`PRAGMA table_info(${tableName})`);
+      const existingCols = cols[0] ? cols[0].values.map(r => r[1]) : [];
+      if (!existingCols.includes(columnName)) {
+        db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnDef}`);
+      }
+    } catch (e) {
+    }
+  }
+
+  addColumnIfNotExists('feedbacks', `recommend_course_type TEXT`);
+  addColumnIfNotExists('feedbacks', `discount_eligibility TEXT DEFAULT 'eligible'`);
+  addColumnIfNotExists('feedbacks', `discount_eligibility_reason TEXT`);
+  addColumnIfNotExists('feedbacks', `waitlist_priority_boost INTEGER DEFAULT 0`);
+  addColumnIfNotExists('feedbacks', `recommend_course_id TEXT`);
+  addColumnIfNotExists('feedbacks', `recommend_course_name TEXT`);
+  addColumnIfNotExists('feedbacks', `dimensions TEXT`);
+
+  addColumnIfNotExists('waitlists', `feedback_priority_score INTEGER DEFAULT 0`);
+  addColumnIfNotExists('waitlists', `teacher_recommend_level TEXT`);
+  addColumnIfNotExists('waitlists', `has_discount_eligibility INTEGER DEFAULT 1`);
+  addColumnIfNotExists('waitlists', `intention_level TEXT DEFAULT 'normal'`);
+
+  addColumnIfNotExists('enrollments', `arrears_status TEXT DEFAULT 'none'`);
+  addColumnIfNotExists('enrollments', `arrears_amount REAL DEFAULT 0`);
+  addColumnIfNotExists('enrollments', `intention_trace TEXT`);
+
+  addColumnIfNotExists('courses', `coupon_quota_limit INTEGER DEFAULT 0`);
+  addColumnIfNotExists('courses', `coupon_quota_used INTEGER DEFAULT 0`);
+
+  addColumnIfNotExists('trials', `reschedule_count INTEGER DEFAULT 0`);
+  addColumnIfNotExists('trials', `original_trial_date TEXT`);
+  addColumnIfNotExists('trials', `cross_campus INTEGER DEFAULT 0`);
+
+  addColumnIfNotExists('audit_logs', `trace_id TEXT`);
+  addColumnIfNotExists('audit_logs', `related_object_ids TEXT`);
+
   console.log('📋 数据库表创建完成');
 }
 
@@ -450,11 +632,13 @@ function queryOne(sql, params = []) {
 function addAuditLog(action, module, objectId, objectName, operator, role, oldValue, newValue) {
   const id = 'a' + uuidv4().slice(0, 8);
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
-  db.run(`INSERT INTO audit_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+  db.run(`INSERT INTO audit_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
     id, action, module, objectId, objectName || '', operator || 'system', role || '', 
     oldValue ? JSON.stringify(oldValue) : '',
     newValue ? JSON.stringify(newValue) : '',
-    now
+    '',
+    now,
+    null, null
   ]);
 }
 
@@ -497,8 +681,116 @@ function calculateWaitlistSortScore(waitlist) {
       score += 10;
     }
   }
+
+  score += (waitlist.feedback_priority_score || 0) * 5;
+
+  if (waitlist.teacher_recommend_level) {
+    switch (waitlist.teacher_recommend_level) {
+      case 'high':
+        score += 30;
+        break;
+      case 'medium':
+        score += 15;
+        break;
+      case 'low':
+        score += 5;
+        break;
+    }
+  }
+
+  if (waitlist.has_discount_eligibility === 1) {
+    score += 5;
+  }
+
+  if (waitlist.intention_level) {
+    switch (waitlist.intention_level) {
+      case 'urgent':
+        score += 25;
+        break;
+      case 'high':
+        score += 15;
+        break;
+      case 'normal':
+        score += 5;
+        break;
+    }
+  }
   
   return score;
+}
+
+function generateTraceId() {
+  return 'tr' + uuidv4().slice(0, 10);
+}
+
+function getUnpaidArrears(leadId, studentName) {
+  const conditions = [];
+  const params = [];
+  let sql = `SELECT SUM(remaining_amount) as total_arrears, COUNT(*) as arrears_count FROM fee_arrears WHERE status = 'unpaid' AND remaining_amount > 0`;
+  
+  if (leadId) {
+    conditions.push(`lead_id = ?`);
+    params.push(leadId);
+  }
+  if (studentName) {
+    conditions.push(`student_name = ?`);
+    params.push(studentName);
+  }
+  if (conditions.length > 0) {
+    sql += ` AND (${conditions.join(' OR ')})`;
+  }
+  
+  const result = queryOne(sql, params);
+  return {
+    total: result?.total_arrears || 0,
+    count: result?.arrears_count || 0,
+  };
+}
+
+function checkCouponQuota(couponId, courseId) {
+  const today = dayjs().format('YYYY-MM-DD');
+  const quota = queryOne(
+    `SELECT * FROM coupon_quotas WHERE coupon_id = ? AND status = 'active' AND (course_id = ? OR course_id IS NULL) ORDER BY course_id IS NULL LIMIT 1`,
+    [couponId, courseId]
+  );
+  if (!quota || quota.total_quota === 0) return { valid: true, message: '无名额限制' };
+
+  if (quota.valid_from && quota.valid_from > today) {
+    return { valid: false, message: '优惠名额活动未开始' };
+  }
+  if (quota.valid_to && quota.valid_to < today) {
+    return { valid: false, message: '优惠名额活动已结束' };
+  }
+  if (quota.remaining_quota <= 0) {
+    return { valid: false, message: '该优惠名额已用完' };
+  }
+  return { valid: true, quota, message: `剩余名额: ${quota.remaining_quota}` };
+}
+
+function consumeCouponQuota(couponId, courseId) {
+  const quota = queryOne(
+    `SELECT * FROM coupon_quotas WHERE coupon_id = ? AND status = 'active' AND (course_id = ? OR course_id IS NULL) ORDER BY course_id IS NULL LIMIT 1`,
+    [couponId, courseId]
+  );
+  if (quota && quota.total_quota > 0) {
+    db.run(`UPDATE coupon_quotas SET used_quota = used_quota + 1, remaining_quota = remaining_quota - 1, updated_at = ? WHERE id = ?`,
+      [dayjs().format('YYYY-MM-DD HH:mm:ss'), quota.id]);
+    return true;
+  }
+  return false;
+}
+
+function releaseCouponQuota(couponId, courseId) {
+  const quota = queryOne(
+    `SELECT * FROM coupon_quotas WHERE coupon_id = ? AND status = 'active' AND (course_id = ? OR course_id IS NULL) ORDER BY course_id IS NULL LIMIT 1`,
+    [couponId, courseId]
+  );
+  if (quota && quota.total_quota > 0) {
+    db.run(`UPDATE coupon_quotas SET used_quota = used_quota - 1, remaining_quota = CASE WHEN remaining_quota + 1 <= total_quota THEN remaining_quota + 1 ELSE remaining_quota END, updated_at = ? WHERE id = ?`,
+      [dayjs().format('YYYY-MM-DD HH:mm:ss'), quota.id]);
+    return true;
+  }
+  return false;
 }
 
 function updateWaitlistPositions(courseId) {
@@ -583,10 +875,11 @@ function seedData() {
     { id: 'c005', name: '钢琴一对一', teacher_id: 't005', teacher_name: '赵老师', capacity: 1, enrolled: 1, schedule: '预约制', schedule_day: '', schedule_time: '', campus_id: 'camp001', campus_name: '朝阳校区', package_id: 'pkg003', package_name: '精英套餐', priority: 5, fee: 25000, status: 'full' },
   ];
   courses.forEach(c => {
-    db.run(`INSERT INTO courses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    db.run(`INSERT INTO courses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       c.id, c.name, c.teacher_id, c.teacher_name, c.capacity, c.enrolled,
       c.schedule, c.schedule_day, c.schedule_time, c.campus_id, c.campus_name,
-      c.package_id, c.package_name, c.priority, c.fee, c.status, now
+      c.package_id, c.package_name, c.priority, c.fee, c.status, now,
+      0, 0
     ]);
   });
 
@@ -644,11 +937,12 @@ function seedData() {
     { id: 't004', lead_id: 'l006', name: '小强', course_id: 'c004', course_name: '编程启蒙班', teacher_id: 't004', teacher_name: '陈老师', date: dayjs().subtract(2, 'day').format('YYYY-MM-DD'), time: '09:00', campus_id: 'camp002', campus_name: '海淀校区', visited: 'no', visit_status: 'no_show', feedback_status: 'cancelled', consultant: '陈顾问' },
   ];
   trials.forEach(t => {
-    db.run(`INSERT INTO trials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    db.run(`INSERT INTO trials VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       t.id, t.lead_id, t.name, t.course_id, t.course_name,
       t.teacher_id, t.teacher_name, t.date, t.time,
       t.campus_id, t.campus_name, t.visited, t.visit_status,
-      t.feedback_status, t.consultant, now, now
+      t.feedback_status, t.consultant, now, now,
+      0, null, 0
     ]);
   });
 
@@ -667,10 +961,11 @@ function seedData() {
     { id: 'f001', trial_id: 't002', name: '小红', course_name: '数学思维提升班', teacher_id: 't002', teacher: '李老师', rating: 5, attention_rating: 5, interaction_rating: 4, understanding_rating: 5, content: '学生反应快，逻辑思维能力强，建议正式入学', suggestion: '可进入中级班学习', strengths: '理解力强，善于思考', weaknesses: '偶尔注意力不集中', recommend_level: 'high' },
   ];
   feedbacks.forEach(f => {
-    db.run(`INSERT INTO feedbacks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    db.run(`INSERT INTO feedbacks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       f.id, f.trial_id, f.name, f.course_name, f.teacher_id, f.teacher,
       f.rating, f.attention_rating, f.interaction_rating, f.understanding_rating,
-      f.content, f.suggestion, f.strengths, f.weaknesses, f.recommend_level, now
+      f.content, f.suggestion, f.strengths, f.weaknesses, f.recommend_level, now,
+      null, 'eligible', null, 0, null, null
     ]);
   });
 
@@ -729,12 +1024,13 @@ function seedData() {
     { id: 'e001', trial_id: 't002', lead_id: 'l002', name: '小红', course_id: 'c002', course_name: '数学思维提升班', campus_id: 'camp001', campus_name: '朝阳校区', package_id: 'pkg002', package_name: '进阶套餐', coupon_id: 'cp004', coupon_code: 'SUMMER300', discount_amount: 300, coupon_ids: 'cp004', coupon_codes: 'SUMMER300', original_fee: 16000, final_fee: 15700, operator: '教务张老师', consultant: '刘顾问', sales_attribution: '刘顾问', status: 'enrolled', approval_status: 'approved', contract_id: 'ct001', refund_rule_id: 'rr001' },
   ];
   enrollments.forEach(e => {
-    db.run(`INSERT INTO enrollments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    db.run(`INSERT INTO enrollments VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       e.id, e.trial_id, e.lead_id, e.name, e.course_id, e.course_name,
       e.campus_id, e.campus_name, e.package_id, e.package_name,
       e.coupon_id, e.coupon_code, e.discount_amount, e.coupon_ids, e.coupon_codes,
       e.original_fee, e.final_fee, e.operator, e.consultant, e.sales_attribution,
-      e.status, e.approval_status, e.contract_id, e.refund_rule_id, now, now
+      e.status, e.approval_status, e.contract_id, e.refund_rule_id, now, now,
+      'none', 0, null
     ]);
   });
 
@@ -744,12 +1040,13 @@ function seedData() {
     { id: 'w003', trial_id: null, lead_id: null, name: '小虎', course_id: 'c003', course_name: '创意美术班', campus_id: 'camp002', campus_name: '海淀校区', coupon_id: null, coupon_code: null, discount_amount: 0, course_priority: 1, enroll_time: dayjs().subtract(7, 'day').format('YYYY-MM-DD HH:mm:ss'), coupon_expire_date: null, operator: '教务王老师', consultant: '陈顾问', status: 'waiting', position: 1, sort_score: 46 },
   ];
   waitlists.forEach(w => {
-    db.run(`INSERT INTO waitlists VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    db.run(`INSERT INTO waitlists VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
       w.id, w.trial_id, w.lead_id, w.name, w.course_id, w.course_name,
       w.campus_id, w.campus_name, w.coupon_id, w.coupon_code,
       w.discount_amount, w.course_priority, w.enroll_time,
       w.coupon_expire_date, w.operator, w.consultant,
-      w.status, w.position, w.sort_score, now, now
+      w.status, w.position, w.sort_score, now, now,
+      0, null, 1, 'normal'
     ]);
   });
 
@@ -1253,7 +1550,13 @@ app.get('/api/feedbacks', (req, res) => {
 });
 
 app.post('/api/feedbacks', (req, res) => {
-  const { trial_id, student_name, course_name, teacher_id, teacher, rating, attention_rating, interaction_rating, understanding_rating, content, suggestion, strengths, weaknesses, recommend_level } = req.body;
+  const { trial_id, student_name, course_name, teacher_id, teacher, rating, overall_score,
+          attention_rating, interaction_rating, understanding_rating, content, suggestion,
+          strengths, weaknesses, recommend_level, recommendation_level, dimensions,
+          recommend_course_id, recommend_course_type, recommend_course_name,
+          discount_eligibility, discount_eligibility_reason, waitlist_priority_boost,
+          trial_date } = req.body;
+
   if (!trial_id || !teacher) {
     return res.status(400).json({ error: '试听记录和老师必填' });
   }
@@ -1265,18 +1568,36 @@ app.post('/api/feedbacks', (req, res) => {
 
   const id = 'f' + uuidv4().slice(0, 8);
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const finalRecommendLevel = recommendation_level || recommend_level;
+  const finalRating = overall_score || rating;
+  const dimensionsJson = dimensions ? JSON.stringify(dimensions) : null;
 
-  db.run(`INSERT INTO feedbacks (id, trial_id, student_name, course_name, teacher_id, teacher, rating, attention_rating, interaction_rating, understanding_rating, content, suggestion, strengths, weaknesses, recommend_level, created_at) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+  db.run(`INSERT INTO feedbacks (id, trial_id, student_name, course_name, teacher_id, teacher,
+          rating, attention_rating, interaction_rating, understanding_rating, content, suggestion,
+          strengths, weaknesses, recommend_level, dimensions,
+          recommend_course_id, recommend_course_type, recommend_course_name,
+          discount_eligibility, discount_eligibility_reason, waitlist_priority_boost,
+          created_at) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
     [id, trial_id, student_name || '', course_name || '', teacher_id || null, teacher,
-     rating || null, attention_rating || null, interaction_rating || null, understanding_rating || null,
-     content || '', suggestion || '', strengths || '', weaknesses || '', recommend_level || '', now]);
+     finalRating || null, attention_rating || null, interaction_rating || null, understanding_rating || null,
+     content || '', suggestion || '', strengths || '', weaknesses || '', finalRecommendLevel || '',
+     dimensionsJson, recommend_course_id || null, recommend_course_type || null, recommend_course_name || null,
+     discount_eligibility || 'eligible', discount_eligibility_reason || null, waitlist_priority_boost || 0, now]);
 
   db.run(`UPDATE trials SET feedback_status = 'completed', updated_at = ? WHERE id = ?`, [now, trial_id]);
 
-  addAuditLog('create', 'feedback', id, student_name, teacher, 'teacher', null, { rating, content });
+  addAuditLog('create', 'feedback', id, student_name, teacher, 'teacher', null, {
+    rating: finalRating,
+    recommend_level: finalRecommendLevel,
+    recommend_course_type,
+    discount_eligibility,
+    waitlist_priority_boost,
+    content
+  });
+
   persist();
-  res.json({ id, message: '反馈提交成功' });
+  res.json({ id, message: '反馈提交成功，推荐班型、优惠资格和候补优先级已同步' });
 });
 
 app.get('/api/coupons', (req, res) => {
@@ -1768,6 +2089,1125 @@ app.get('/api/sales-attribution', (req, res) => {
   `);
   
   res.json({ by_consultant: stats, by_sales: enrollStats });
+});
+
+app.get('/api/follow-up-records', (req, res) => {
+  const { lead_id, follow_up_by } = req.query;
+  let sql = "SELECT * FROM follow_up_records WHERE 1=1";
+  if (lead_id) sql += ` AND lead_id = '${lead_id}'`;
+  if (follow_up_by) sql += ` AND follow_up_by = '${follow_up_by}'`;
+  sql += " ORDER BY follow_date DESC, created_at DESC";
+  const records = queryAll(sql);
+  res.json(records);
+});
+
+app.post('/api/follow-up-records', (req, res) => {
+  const { lead_id, follow_type, follow_date, follow_content, result, next_plan, next_follow_date, intention_level, follow_up_by } = req.body;
+  if (!lead_id || !follow_date) {
+    return res.status(400).json({ error: '线索ID和跟进日期必填' });
+  }
+  const id = 'fur' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  db.run(`INSERT INTO follow_up_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, lead_id, follow_type || 'phone', follow_date, follow_content || '', result || '',
+     next_plan || '', next_follow_date || null, intention_level || 'normal', follow_up_by || '', now]);
+
+  if (intention_level) {
+    const lead = queryOne(`SELECT student_name, course_id FROM leads WHERE id = ?`, [lead_id]);
+    if (lead) {
+      db.run(`UPDATE leads SET status = CASE WHEN ? = 'urgent' THEN 'high_intention' WHEN ? = 'high' THEN 'high_intention' ELSE status END, updated_at = ? WHERE id = ?`,
+        [intention_level, intention_level, now, lead_id]);
+    }
+  }
+
+  if (next_follow_date) {
+    const planId = 'fp' + uuidv4().slice(0, 6);
+    db.run(`INSERT INTO follow_up_plans VALUES (?, ?, ?, ?, ?, 'pending', '', NULL, ?)`,
+      [planId, lead_id, next_follow_date, next_plan || '下一次跟进', follow_up_by || '', now]);
+  }
+
+  const traceId = generateTraceId();
+  addAuditLog('create', 'follow_up_record', id, '', follow_up_by || 'consultant', 'consultant', null,
+    { lead_id, follow_date, intention_level });
+  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+
+  persist();
+  res.json({ id, trace_id: traceId, message: '跟进记录已保存' });
+});
+
+app.get('/api/referrals', (req, res) => {
+  const { referrer_lead_id, referred_lead_id } = req.query;
+  let sql = "SELECT * FROM referrals WHERE 1=1";
+  if (referrer_lead_id) sql += ` AND referrer_lead_id = '${referrer_lead_id}'`;
+  if (referred_lead_id) sql += ` AND referred_lead_id = '${referred_lead_id}'`;
+  sql += " ORDER BY created_at DESC";
+  const referrals = queryAll(sql);
+  res.json(referrals);
+});
+
+app.post('/api/referrals', (req, res) => {
+  const { referrer_lead_id, referrer_student_name, referred_lead_id, referred_student_name, referrer_type, reward_amount, relation, remark, created_by } = req.body;
+  if (!referred_lead_id) {
+    return res.status(400).json({ error: '被推荐线索ID必填' });
+  }
+  const id = 'ref' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  db.run(`INSERT INTO referrals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, referrer_lead_id || null, referrer_student_name || '',
+     referred_lead_id, referred_student_name || '', referrer_type || 'student',
+     'pending', reward_amount || 0, relation || '', remark || '', created_by || 'system', now]);
+
+  if (referrer_lead_id) {
+    const traceId = generateTraceId();
+    addAuditLog('create', 'referral', id, referred_student_name || '', created_by || 'consultant', 'consultant', null,
+      { referrer: referrer_student_name, referred: referred_student_name });
+    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+      [traceId, [referrer_lead_id, referred_lead_id].filter(Boolean).join(',')]);
+  }
+
+  persist();
+  res.json({ id, message: '转介绍关系已记录' });
+});
+
+app.put('/api/referrals/:id/reward', (req, res) => {
+  const { reward_status, reward_amount, operator } = req.body;
+  const referral = queryOne(`SELECT * FROM referrals WHERE id = ?`, [req.params.id]);
+  if (!referral) {
+    return res.status(404).json({ error: '转介绍记录不存在' });
+  }
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const oldStatus = referral.reward_status;
+  const oldAmount = referral.reward_amount;
+
+  db.run(`UPDATE referrals SET reward_status = ?, reward_amount = ? WHERE id = ?`,
+    [reward_status || 'issued', reward_amount || referral.reward_amount, req.params.id]);
+
+  addAuditLog('update', 'referral', req.params.id, referral.referred_student_name, operator || 'system', 'admin',
+    { reward_status: oldStatus, reward_amount: oldAmount },
+    { reward_status: reward_status || 'issued', reward_amount: reward_amount || oldAmount });
+  persist();
+  res.json({ message: '奖励状态已更新' });
+});
+
+app.get('/api/intention-changes', (req, res) => {
+  const { lead_id } = req.query;
+  let sql = "SELECT * FROM intention_changes WHERE 1=1";
+  if (lead_id) sql += ` AND lead_id = '${lead_id}'`;
+  sql += " ORDER BY created_at DESC";
+  const changes = queryAll(sql);
+  res.json(changes);
+});
+
+app.post('/api/intention-changes', (req, res) => {
+  const { lead_id, student_name, old_intention, new_intention, change_reason, old_course_id, new_course_id, change_source, changed_by } = req.body;
+  if (!lead_id) {
+    return res.status(400).json({ error: '线索ID必填' });
+  }
+  const id = 'ic' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  db.run(`INSERT INTO intention_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, lead_id, student_name || '', old_intention || '', new_intention || '',
+     change_reason || '', old_course_id || null, new_course_id || null,
+     change_source || 'consultant', changed_by || '', now]);
+
+  if (new_course_id) {
+    const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [new_course_id]);
+    if (course) {
+      createLeadVersion(lead_id, changed_by || 'system', `意向课程变更: ${old_course_id}->${new_course_id}`);
+      db.run(`UPDATE leads SET course_id = ?, course_name = ?, updated_at = ? WHERE id = ?`,
+        [new_course_id, course.name, now, lead_id]);
+    }
+  }
+
+  const traceId = generateTraceId();
+  addAuditLog('create', 'intention_change', id, student_name || '', changed_by || 'consultant', change_source || 'consultant',
+    { old_course_id, old_intention }, { new_course_id, new_intention });
+  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+
+  persist();
+  res.json({ id, trace_id: traceId, message: '意向变更已记录' });
+});
+
+app.get('/api/course-intentions', (req, res) => {
+  const { lead_id, status } = req.query;
+  let sql = "SELECT * FROM course_intentions WHERE 1=1";
+  if (lead_id) sql += ` AND lead_id = '${lead_id}'`;
+  if (status) sql += ` AND status = '${status}'`;
+  sql += " ORDER BY priority_order ASC, created_at DESC";
+  const intentions = queryAll(sql);
+  res.json(intentions);
+});
+
+app.post('/api/course-intentions', (req, res) => {
+  const { lead_id, student_name, course_id, course_name, intention_level, priority_order, source, remark, created_by } = req.body;
+  if (!lead_id || !course_id) {
+    return res.status(400).json({ error: '线索ID和课程ID必填' });
+  }
+  const id = 'ci' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  db.run(`INSERT INTO course_intentions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, lead_id, student_name || '', course_id, course_name || '',
+     intention_level || 'normal', priority_order || 1, source || '', remark || '',
+     'active', created_by || '', now, now]);
+
+  const traceId = generateTraceId();
+  addAuditLog('create', 'course_intention', id, student_name || '', created_by || 'consultant', 'consultant',
+    null, { course_id, course_name, intention_level });
+  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+
+  persist();
+  res.json({ id, trace_id: traceId, message: '课程意向已添加' });
+});
+
+app.put('/api/course-intentions/:id', (req, res) => {
+  const { intention_level, priority_order, status, remark, operator } = req.body;
+  const intention = queryOne(`SELECT * FROM course_intentions WHERE id = ?`, [req.params.id]);
+  if (!intention) {
+    return res.status(404).json({ error: '课程意向不存在' });
+  }
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const oldLevel = intention.intention_level;
+  const oldStatus = intention.status;
+
+  db.run(`UPDATE course_intentions SET intention_level = ?, priority_order = ?, status = ?, remark = ?, updated_at = ? WHERE id = ?`,
+    [intention_level || intention.intention_level, priority_order || intention.priority_order,
+     status || intention.status, remark || intention.remark, now, req.params.id]);
+
+  addAuditLog('update', 'course_intention', req.params.id, intention.student_name, operator || 'system', 'consultant',
+    { intention_level: oldLevel, status: oldStatus },
+    { intention_level: intention_level || oldLevel, status: status || oldStatus });
+  persist();
+  res.json({ message: '课程意向已更新' });
+});
+
+app.get('/api/fee-arrears', (req, res) => {
+  const { lead_id, student_name, status } = req.query;
+  let sql = "SELECT * FROM fee_arrears WHERE 1=1";
+  if (lead_id) sql += ` AND lead_id = '${lead_id}'`;
+  if (student_name) sql += ` AND student_name LIKE '%${student_name}%'`;
+  if (status) sql += ` AND status = '${status}'`;
+  sql += " ORDER BY due_date ASC, created_at DESC";
+  const arrears = queryAll(sql);
+  res.json(arrears);
+});
+
+app.post('/api/fee-arrears', (req, res) => {
+  const { lead_id, student_name, enrollment_id, course_id, course_name, arrears_amount, due_date, remark, created_by } = req.body;
+  if (!student_name || !arrears_amount) {
+    return res.status(400).json({ error: '学生姓名和欠费金额必填' });
+  }
+  const id = 'fa' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  db.run(`INSERT INTO fee_arrears VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, lead_id || null, student_name, enrollment_id || null, course_id || null, course_name || '',
+     arrears_amount, 0, arrears_amount, due_date || null, 'unpaid', remark || '', created_by || '', now, now]);
+
+  if (enrollment_id) {
+    db.run(`UPDATE enrollments SET arrears_status = 'pending', arrears_amount = ?, updated_at = ? WHERE id = ?`,
+      [arrears_amount, now, enrollment_id]);
+  }
+
+  const traceId = generateTraceId();
+  addAuditLog('create', 'fee_arrears', id, student_name, created_by || 'finance', 'finance', null,
+    { arrears_amount, course_name, due_date });
+  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+    [traceId, [lead_id, enrollment_id].filter(Boolean).join(',')]);
+
+  persist();
+  res.json({ id, trace_id: traceId, message: '欠费记录已创建' });
+});
+
+app.post('/api/fee-arrears/:id/pay', (req, res) => {
+  const { paid_amount, operator } = req.body;
+  const arrear = queryOne(`SELECT * FROM fee_arrears WHERE id = ?`, [req.params.id]);
+  if (!arrear) {
+    return res.status(404).json({ error: '欠费记录不存在' });
+  }
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const newPaid = (arrear.paid_amount || 0) + (paid_amount || arrear.remaining_amount);
+  const newRemaining = Math.max(0, arrear.arrears_amount - newPaid);
+  const newStatus = newRemaining <= 0 ? 'paid' : 'partial';
+
+  db.run(`UPDATE fee_arrears SET paid_amount = ?, remaining_amount = ?, status = ?, updated_at = ? WHERE id = ?`,
+    [newPaid, newRemaining, newStatus, now, req.params.id]);
+
+  if (arrear.enrollment_id && newRemaining <= 0) {
+    db.run(`UPDATE enrollments SET arrears_status = 'cleared', updated_at = ? WHERE id = ?`, [now, arrear.enrollment_id]);
+  }
+
+  addAuditLog('update', 'fee_arrears', req.params.id, arrear.student_name, operator || 'finance', 'finance',
+    { status: arrear.status, remaining: arrear.remaining_amount },
+    { status: newStatus, paid: paid_amount, remaining: newRemaining });
+  persist();
+  res.json({ message: `缴费成功，剩余: ${newRemaining}` });
+});
+
+app.get('/api/class-drop-records', (req, res) => {
+  const { enrollment_id, course_id } = req.query;
+  let sql = "SELECT * FROM class_drop_records WHERE 1=1";
+  if (enrollment_id) sql += ` AND enrollment_id = '${enrollment_id}'`;
+  if (course_id) sql += ` AND course_id = '${course_id}'`;
+  sql += " ORDER BY created_at DESC";
+  const records = queryAll(sql);
+  res.json(records);
+});
+
+app.post('/api/class-drop-records', (req, res) => {
+  const { enrollment_id, student_name, course_id, course_name, drop_date, drop_reason, refund_amount, operator, auto_trigger_waitlist } = req.body;
+  if (!enrollment_id || !drop_date) {
+    return res.status(400).json({ error: '报名ID和退班日期必填' });
+  }
+  const id = 'cd' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const traceId = generateTraceId();
+
+  db.run(`INSERT INTO class_drop_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, enrollment_id, student_name || '', course_id || null, course_name || '',
+     drop_date, drop_reason || '', refund_amount || 0, operator || 'system',
+     auto_trigger_waitlist !== undefined ? (auto_trigger_waitlist ? 1 : 0) : 1, now]);
+
+  const enrollment = queryOne(`SELECT * FROM enrollments WHERE id = ? AND status = 'enrolled'`, [enrollment_id]);
+  if (enrollment) {
+    const oldCouponIds = enrollment.coupon_ids ? enrollment.coupon_ids.split(',') : [];
+    const usedCouponId = enrollment.coupon_id;
+
+    db.run(`UPDATE enrollments SET status = 'dropped', updated_at = ? WHERE id = ?`, [now, enrollment_id]);
+
+    const cid = enrollment.course_id;
+    db.run(`UPDATE courses SET enrolled = enrolled - 1, status = CASE WHEN enrolled - 1 < capacity THEN 'active' ELSE status END WHERE id = ?`, [cid]);
+
+    if (usedCouponId) {
+      db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [usedCouponId]);
+      releaseCouponQuota(usedCouponId, cid);
+    }
+    oldCouponIds.forEach(cid2 => {
+      if (cid2 && cid2 !== usedCouponId) {
+        db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [cid2]);
+        releaseCouponQuota(cid2, cid);
+      }
+    });
+
+    if (enrollment.lead_id) {
+      db.run(`UPDATE leads SET status = 'dropped', updated_at = ? WHERE id = ?`, [now, enrollment.lead_id]);
+    }
+
+    let autoConverted = [];
+    if (auto_trigger_waitlist !== false && auto_trigger_waitlist !== 0) {
+      const availableSpots = 1;
+      updateWaitlistPositions(cid);
+      const waitlists = queryAll(
+        `SELECT * FROM waitlists WHERE course_id = ? AND status = 'waiting' ORDER BY sort_score DESC, created_at ASC LIMIT ?`,
+        [cid, availableSpots]
+      );
+
+      const today = dayjs().format('YYYY-MM-DD');
+      for (const w of waitlists) {
+        if (w.coupon_expire_date && w.coupon_expire_date < today) continue;
+        if (w.has_discount_eligibility === 0 && w.discount_amount > 0) continue;
+
+        const enrollId = 'e' + uuidv4().slice(0, 8);
+        const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [cid]);
+        const origFee = course?.fee || 0;
+        const finFee = Math.max(0, origFee - (w.discount_amount || 0));
+
+        const finalDiscount = w.has_discount_eligibility === 0 ? 0 : (w.discount_amount || 0);
+        const finalFinFee = Math.max(0, origFee - finalDiscount);
+
+        db.run(`INSERT INTO enrollments (id, trial_id, lead_id, student_name, course_id, course_name, campus_id, campus_name, coupon_id, coupon_code, discount_amount, original_fee, final_fee, operator, consultant, sales_attribution, status, approval_status, created_at, updated_at, intention_trace)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enrolled', 'approved', ?, ?, ?)`,
+          [enrollId, w.trial_id, w.lead_id, w.student_name, w.course_id, w.course_name,
+           w.campus_id, w.campus_name, w.has_discount_eligibility === 0 ? null : w.coupon_id,
+           w.has_discount_eligibility === 0 ? '' : w.coupon_code, finalDiscount,
+           origFee, finalFinFee, operator || 'system', w.consultant || '', w.consultant || '',
+           now, now, `auto_converted_from_waitlist:${w.id};drop_trigger:${id}`]);
+
+        db.run(`UPDATE courses SET enrolled = enrolled + 1, status = CASE WHEN enrolled + 1 >= capacity THEN 'full' ELSE 'active' END WHERE id = ?`, [cid]);
+        db.run(`UPDATE waitlists SET status = 'converted', updated_at = ? WHERE id = ?`, [now, w.id]);
+
+        if (w.coupon_id && w.has_discount_eligibility !== 0) {
+          db.run(`UPDATE coupons SET used = 'yes', status = 'used' WHERE id = ?`, [w.coupon_id]);
+          consumeCouponQuota(w.coupon_id, cid);
+        }
+        if (w.lead_id) {
+          db.run(`UPDATE leads SET status = 'enrolled', updated_at = ? WHERE id = ?`, [now, w.lead_id]);
+        }
+
+        const contractNo = 'HT' + dayjs().format('YYYYMM') + String(Math.floor(Math.random() * 9000) + 1000);
+        const contractId = 'ct' + uuidv4().slice(0, 6);
+        db.run(`INSERT INTO contracts (id, contract_no, enrollment_id, student_name, course_id, course_name, original_amount, discount_amount, final_amount, status, sign_date, effective_date, expire_date, signed_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?)`,
+          [contractId, contractNo, enrollId, w.student_name, w.course_id, w.course_name,
+           origFee, finalDiscount, finalFinFee, now, now,
+           dayjs().add(365, 'day').format('YYYY-MM-DD'), operator || 'system', now]);
+        db.run(`UPDATE enrollments SET contract_id = ? WHERE id = ?`, [contractId, enrollId]);
+
+        autoConverted.push({ id: enrollId, student_name: w.student_name, waitlist_id: w.id });
+      }
+      updateWaitlistPositions(cid);
+    }
+
+    addAuditLog('drop', 'enrollment', enrollment_id, enrollment.student_name, operator || 'system', 'admin',
+      { status: 'enrolled' }, { status: 'dropped', refund_amount: refund_amount || 0 });
+    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+      [traceId, [course_id, id].filter(Boolean).join(',')]);
+
+    persist();
+    return res.json({
+      id,
+      trace_id: traceId,
+      auto_converted: autoConverted,
+      message: autoConverted.length > 0 ? `退班成功，已自动转正候补${autoConverted.length}人` : '退班成功'
+    });
+  }
+
+  persist();
+  res.json({ id, trace_id: traceId, message: '退班记录已创建' });
+});
+
+app.get('/api/coupon-quotas', (req, res) => {
+  const { coupon_id, course_id } = req.query;
+  let sql = "SELECT cq.*, cp.name as coupon_name, cp.code as coupon_code FROM coupon_quotas cq LEFT JOIN coupons cp ON cq.coupon_id = cp.id WHERE 1=1";
+  if (coupon_id) sql += ` AND cq.coupon_id = '${coupon_id}'`;
+  if (course_id) sql += ` AND (cq.course_id = '${course_id}' OR cq.course_id IS NULL)`;
+  sql += " ORDER BY cq.created_at DESC";
+  const quotas = queryAll(sql);
+  res.json(quotas);
+});
+
+app.post('/api/coupon-quotas', (req, res) => {
+  const { coupon_id, total_quota, course_id, valid_from, valid_to, operator } = req.body;
+  if (!coupon_id || !total_quota) {
+    return res.status(400).json({ error: '优惠券ID和总名额必填' });
+  }
+  const id = 'cq' + uuidv4().slice(0, 6);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  db.run(`INSERT INTO coupon_quotas VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, coupon_id, total_quota, 0, total_quota, course_id || null,
+     valid_from || null, valid_to || null, 'active', now, now]);
+
+  if (course_id) {
+    db.run(`UPDATE courses SET coupon_quota_limit = coupon_quota_limit + ?, updated_at = ? WHERE id = ?`,
+      [total_quota, now, course_id]);
+  }
+
+  addAuditLog('create', 'coupon_quota', id, '', operator || 'admin', 'admin', null,
+    { coupon_id, total_quota, course_id });
+  persist();
+  res.json({ id, message: '优惠名额已设置' });
+});
+
+app.get('/api/trial-reschedules', (req, res) => {
+  const { trial_id } = req.query;
+  let sql = "SELECT * FROM trial_reschedules WHERE 1=1";
+  if (trial_id) sql += ` AND trial_id = '${trial_id}'`;
+  sql += " ORDER BY created_at DESC";
+  const schedules = queryAll(sql);
+  res.json(schedules);
+});
+
+app.post('/api/trials/:id/reschedule', (req, res) => {
+  const { new_trial_date, new_trial_time, new_campus_id, new_campus_name, new_teacher_id, new_teacher_name, reschedule_reason, operator } = req.body;
+  const trial = queryOne(`SELECT * FROM trials WHERE id = ?`, [req.params.id]);
+  if (!trial) {
+    return res.status(404).json({ error: '试听记录不存在' });
+  }
+  if (!new_trial_date) {
+    return res.status(400).json({ error: '新的试听日期必填' });
+  }
+
+  if (new_teacher_id && new_trial_date) {
+    const leave = queryOne(
+      `SELECT * FROM teacher_leaves WHERE teacher_id = ? AND leave_date = ? AND status = 'approved'`,
+      [new_teacher_id, new_trial_date]
+    );
+    if (leave) {
+      return res.status(400).json({ error: '新老师当天请假，请选择其他日期或老师' });
+    }
+  }
+
+  const id = 'trs' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const traceId = generateTraceId();
+  const isCrossCampus = new_campus_id && trial.campus_id && new_campus_id !== trial.campus_id;
+  const rescheduleType = isCrossCampus ? 'cross_campus' : 'same_campus';
+
+  db.run(`INSERT INTO trial_reschedules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, trial.id, trial.student_name,
+     trial.trial_date, trial.trial_time, trial.campus_id, trial.campus_name,
+     trial.teacher_id, trial.teacher_name,
+     new_trial_date, new_trial_time || null, new_campus_id || null, new_campus_name || '',
+     new_teacher_id || null, new_teacher_name || '',
+     reschedule_reason || '', rescheduleType, operator || '', now]);
+
+  const originalDate = trial.original_trial_date || trial.trial_date;
+  const newCount = (trial.reschedule_count || 0) + 1;
+
+  const finalTeacherId = new_teacher_id || trial.teacher_id;
+  const finalTeacherName = new_teacher_name || trial.teacher_name;
+
+  db.run(`UPDATE trials SET trial_date = ?, trial_time = ?, campus_id = ?, campus_name = ?, teacher_id = ?, teacher_name = ?, reschedule_count = ?, original_trial_date = ?, cross_campus = ?, updated_at = ? WHERE id = ?`,
+    [new_trial_date, new_trial_time || trial.trial_time,
+     new_campus_id || trial.campus_id, new_campus_name || trial.campus_name,
+     finalTeacherId, finalTeacherName,
+     newCount, originalDate, isCrossCampus ? 1 : (trial.cross_campus || 0), now, trial.id]);
+
+  addAuditLog('reschedule', 'trial', trial.id, trial.student_name, operator || 'consultant', 'consultant',
+    { trial_date: trial.trial_date, campus_id: trial.campus_id, teacher_id: trial.teacher_id },
+    { trial_date: new_trial_date, campus_id: new_campus_id || trial.campus_id, teacher_id: finalTeacherId, reschedule_count: newCount });
+  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+
+  persist();
+  res.json({
+    id,
+    trace_id: traceId,
+    reschedule_type: rescheduleType,
+    message: isCrossCampus ? '跨校区改约成功' : '试听改约成功'
+  });
+});
+
+app.post('/api/enrollments/check-enhanced', (req, res) => {
+  const { trial_id, lead_id, student_name, course_id, coupon_ids = [] } = req.body;
+  const errors = [];
+  const warnings = [];
+  const info = [];
+  const traceId = generateTraceId();
+
+  if (trial_id) {
+    const trial = queryOne(`SELECT * FROM trials WHERE id = ?`, [trial_id]);
+    if (!trial) {
+      errors.push('试听记录不存在');
+      return res.json({ can_enroll: false, errors, warnings, info, trace_id: traceId });
+    }
+
+    if (trial.visited !== 'yes') {
+      errors.push(`NO_VISIT_NO_ENROLL: 试听未到访(状态:${trial.visit_status})，不能办理转正报名`);
+    } else {
+      info.push('✓ 已到访校验通过');
+    }
+
+    if (trial.feedback_status !== 'completed') {
+      errors.push(`FEEDBACK_REQUIRED: 课堂反馈未完成，请先让老师填写反馈后再办理转正`);
+    } else {
+      info.push('✓ 老师反馈已完成');
+      const feedback = queryOne(`SELECT * FROM feedbacks WHERE trial_id = ?`, [trial_id]);
+      if (feedback) {
+        if (feedback.discount_eligibility && feedback.discount_eligibility !== 'eligible') {
+          warnings.push(`老师标记：优惠资格受限 - ${feedback.discount_eligibility_reason || feedback.discount_eligibility}`);
+        }
+        if (feedback.recommend_course_id && feedback.recommend_course_id !== course_id) {
+          const recCourse = queryOne(`SELECT * FROM courses WHERE id = ?`, [feedback.recommend_course_id]);
+          warnings.push(`老师推荐班型与当前选择不一致，推荐: ${feedback.recommend_course_name || (recCourse?.name) || feedback.recommend_course_type || ''}`);
+        }
+        if (feedback.recommend_level === 'high') {
+          info.push('✓ 老师高推荐，候补优先级加成');
+        }
+      }
+    }
+  }
+
+  const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [course_id]);
+  if (!course) {
+    errors.push('课程不存在');
+  } else {
+    info.push(`班级容量: ${course.enrolled}/${course.capacity}`);
+    if (course.enrolled >= course.capacity) {
+      warnings.push(`FULL_CLASS_WAITLIST: 课程「${course.name}」已满班，只能进入候补`);
+      info.push('候补转正按：报名时间→课程优先级→优惠有效期→老师推荐→意向等级综合排序');
+    }
+
+    if (course.coupon_quota_limit > 0) {
+      info.push(`课程优惠名额: ${course.coupon_quota_used || 0}/${course.coupon_quota_limit}`);
+    }
+
+    const pendingContracts = queryOne(
+      `SELECT COUNT(*) as cnt FROM contracts WHERE course_id = ? AND status = 'pending'`,
+      [course_id]
+    );
+    if (pendingContracts?.cnt > 0) {
+      warnings.push(`注意: 本课程有${pendingContracts.cnt}份待签约合同`);
+    }
+  }
+
+  const arrears = getUnpaidArrears(lead_id, student_name);
+  if (arrears.total > 0) {
+    errors.push(`HAS_ARREARS: 该学员存在历史欠费 ¥${arrears.total}（${arrears.count}笔），请先缴费清欠`);
+  } else {
+    info.push('✓ 无历史欠费');
+  }
+
+  if (lead_id) {
+    const existingEnroll = queryOne(
+      `SELECT e.*, c.name as course_name FROM enrollments e LEFT JOIN courses c ON e.course_id = c.id WHERE e.lead_id = ? AND e.status = 'enrolled' AND e.course_id = ?`,
+      [lead_id, course_id]
+    );
+    if (existingEnroll) {
+      errors.push(`该学员已报名本课程「${existingEnroll.course_name}」，不可重复报名`);
+    } else {
+      info.push('✓ 无重复报名');
+    }
+
+    const intentions = queryAll(
+      `SELECT * FROM course_intentions WHERE lead_id = ? AND status = 'active' ORDER BY priority_order ASC`,
+      [lead_id]
+    );
+    if (intentions.length > 0) {
+      info.push(`已有${intentions.length}个课程意向，优先级: ${intentions.map(i => i.course_name).join(' → ')}`);
+    }
+  }
+
+  if (coupon_ids && coupon_ids.length > 0) {
+    const today = dayjs().format('YYYY-MM-DD');
+    const groups = {};
+    let totalDiscount = 0;
+    const feedback = trial_id ? queryOne(`SELECT * FROM feedbacks WHERE trial_id = ?`, [trial_id]) : null;
+    const isDiscountEligible = !feedback || !feedback.discount_eligibility || feedback.discount_eligibility === 'eligible';
+
+    if (!isDiscountEligible) {
+      errors.push(`DISCOUNT_NOT_ELIGIBLE: 根据老师反馈，该学员优惠资格受限，不可使用优惠券`);
+    } else {
+      for (const cid of coupon_ids) {
+        const coupon = queryOne(`SELECT * FROM coupons WHERE id = ? AND used = 'no'`, [cid]);
+        if (!coupon) {
+          errors.push(`优惠券不存在或已被占用`);
+          continue;
+        }
+        if (coupon.expire_date < today) {
+          errors.push(`优惠券「${coupon.name}」已过期，不能抵扣`);
+          continue;
+        }
+        const quotaCheck = checkCouponQuota(cid, course_id);
+        if (!quotaCheck.valid) {
+          errors.push(`优惠券「${coupon.name}」: ${quotaCheck.message}`);
+          continue;
+        }
+        if (coupon.min_amount > 0 && course && course.fee < coupon.min_amount) {
+          warnings.push(`优惠券「${coupon.name}」未满${coupon.min_amount}元不可用`);
+          continue;
+        }
+        totalDiscount += coupon.amount;
+        if (coupon.stackable && coupon.stack_group) {
+          if (!groups[coupon.stack_group]) groups[coupon.stack_group] = 0;
+          groups[coupon.stack_group]++;
+        }
+      }
+      for (const g in groups) {
+        if (groups[g] > 1) {
+          errors.push(`同组「${g}」优惠券只能使用一张`);
+        }
+      }
+      if (totalDiscount > 0 && course) {
+        info.push(`预计优惠 ¥${totalDiscount}，实付约 ¥${Math.max(0, course.fee - totalDiscount)}`);
+      }
+    }
+  }
+
+  res.json({
+    can_enroll: errors.length === 0,
+    is_waitlist: course && course.enrolled >= course.capacity && errors.length === 0,
+    trace_id: traceId,
+    errors,
+    warnings,
+    info,
+    trial: trial_id ? queryOne(`SELECT * FROM trials WHERE id = ?`, [trial_id]) : null,
+    course,
+    unpaid_arrears: arrears,
+  });
+});
+
+app.post('/api/enrollments/safe-create', (req, res) => {
+  const { trial_id, lead_id, student_name, course_id, coupon_ids = [], coupon_codes, original_fee, final_fee, operator, consultant, sales_attribution, campus_id, campus_name, package_id, package_name, refund_rule_id, trace_id } = req.body;
+  const trace = trace_id || generateTraceId();
+  const usedQuotaCoupons = [];
+  const usedCouponIds = [];
+
+  const check = trial_id ? queryOne(`SELECT visited, feedback_status FROM trials WHERE id = ?`, [trial_id]) : null;
+  if (trial_id && (!check || check.visited !== 'yes')) {
+    return res.status(400).json({ error: '试听未到访，不能办理转正报名', trace_id: trace });
+  }
+  if (trial_id && check && check.feedback_status !== 'completed') {
+    return res.status(400).json({ error: '课堂反馈未完成，不能办理转正', trace_id: trace });
+  }
+
+  const feedback = trial_id ? queryOne(`SELECT * FROM feedbacks WHERE trial_id = ?`, [trial_id]) : null;
+  const isDiscountEligible = !feedback || !feedback.discount_eligibility || feedback.discount_eligibility === 'eligible';
+
+  const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [course_id]);
+  if (!course) {
+    return res.status(400).json({ error: '课程不存在', trace_id: trace });
+  }
+  if (course.enrolled >= course.capacity) {
+    return res.status(400).json({ error: '课程已满班，请加入候补', trace_id: trace });
+  }
+
+  const arrears = getUnpaidArrears(lead_id, student_name);
+  if (arrears.total > 0) {
+    return res.status(400).json({ error: `该学员存在历史欠费 ¥${arrears.total}，请先缴费清欠`, trace_id: trace });
+  }
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  let totalDiscount = 0;
+  const validCouponIds = [];
+  const validCouponCodes = [];
+
+  if (isDiscountEligible) {
+    for (const cid of coupon_ids) {
+      const coupon = queryOne(`SELECT * FROM coupons WHERE id = ? AND used = 'no'`, [cid]);
+      if (coupon && coupon.expire_date >= today) {
+        const quotaCheck = checkCouponQuota(cid, course_id);
+        if (!quotaCheck.valid) {
+          for (const ucid of usedQuotaCoupons) {
+            releaseCouponQuota(ucid, course_id);
+          }
+          return res.status(400).json({ error: `优惠券「${coupon.name}」: ${quotaCheck.message}`, trace_id: trace });
+        }
+        const consumed = consumeCouponQuota(cid, course_id);
+        if (consumed) usedQuotaCoupons.push(cid);
+
+        db.run(`UPDATE coupons SET used = 'yes', status = 'used' WHERE id = ?`, [cid]);
+        const verify = queryOne(`SELECT used FROM coupons WHERE id = ?`, [cid]);
+        if (verify?.used !== 'yes') {
+          for (const ucid of usedQuotaCoupons) {
+            releaseCouponQuota(ucid, course_id);
+          }
+          for (const vcid of usedCouponIds) {
+            db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [vcid]);
+          }
+          return res.status(400).json({ error: `优惠券被并发占用，报名失败，优惠名额已释放`, trace_id: trace });
+        }
+        usedCouponIds.push(cid);
+
+        totalDiscount += coupon.amount;
+        validCouponIds.push(cid);
+        validCouponCodes.push(coupon.code);
+      }
+    }
+  }
+
+  let enrollSuccess = false;
+  let enrollId = null;
+  let contractId = null;
+
+  try {
+    enrollId = 'e' + uuidv4().slice(0, 8);
+    const origFee = original_fee || course.fee || 0;
+    const finFee = Math.max(0, origFee - totalDiscount);
+    const intentions = lead_id ? queryAll(`SELECT course_name FROM course_intentions WHERE lead_id = ? AND status = 'active' ORDER BY priority_order ASC`, [lead_id]) : [];
+    const intentionTrace = intentions.length > 0 ? `intentions:${intentions.map(i => i.course_name).join('>')}` : '';
+
+    db.run(`INSERT INTO enrollments (id, trial_id, lead_id, student_name, course_id, course_name, campus_id, campus_name, package_id, package_name, coupon_id, coupon_code, discount_amount, coupon_ids, coupon_codes, original_fee, final_fee, operator, consultant, sales_attribution, status, approval_status, contract_id, refund_rule_id, created_at, updated_at, intention_trace)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enrolled', 'approved', NULL, ?, ?, ?, ?)`,
+      [enrollId, trial_id || null, lead_id || null, student_name, course_id, course.name,
+       campus_id || course.campus_id, campus_name || course.campus_name,
+       package_id || course.package_id, package_name || course.package_name,
+       validCouponIds[0] || null, validCouponCodes[0] || '', totalDiscount,
+       validCouponIds.join(','), validCouponCodes.join(','),
+       origFee, finFee, operator || 'system', consultant || '',
+       sales_attribution || consultant || '', refund_rule_id || 'rr001', now, now, intentionTrace]);
+
+    const newEnrolled = course.enrolled + 1;
+    db.run(`UPDATE courses SET enrolled = ?, status = CASE WHEN ? >= capacity THEN 'full' ELSE 'active' END WHERE id = ?`,
+      [newEnrolled, newEnrolled, course_id]);
+
+    if (validCouponIds.length > 0 && course.coupon_quota_limit > 0) {
+      db.run(`UPDATE courses SET coupon_quota_used = coupon_quota_used + ? WHERE id = ?`,
+        [validCouponIds.length, course_id]);
+    }
+
+    if (trial_id) {
+      const trialInfo = queryOne(`SELECT lead_id FROM trials WHERE id = ?`, [trial_id]);
+      if (trialInfo) {
+        db.run(`UPDATE leads SET status = 'enrolled', updated_at = ? WHERE id = ?`, [now, trialInfo.lead_id]);
+      }
+    } else if (lead_id) {
+      db.run(`UPDATE leads SET status = 'enrolled', updated_at = ? WHERE id = ?`, [now, lead_id]);
+    }
+
+    const contractNo = 'HT' + dayjs().format('YYYYMM') + String(Math.floor(Math.random() * 9000) + 1000);
+    contractId = 'ct' + uuidv4().slice(0, 6);
+    db.run(`INSERT INTO contracts (id, contract_no, enrollment_id, student_name, course_id, course_name, package_id, package_name, original_amount, discount_amount, final_amount, status, sign_date, effective_date, expire_date, signed_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?)`,
+      [contractId, contractNo, enrollId, student_name, course_id, course.name,
+       package_id || course.package_id, package_name || course.package_name,
+       origFee, totalDiscount, finFee, now, now,
+       dayjs().add(365, 'day').format('YYYY-MM-DD'), operator || 'system', now]);
+
+    db.run(`UPDATE enrollments SET contract_id = ? WHERE id = ?`, [contractId, enrollId]);
+    enrollSuccess = true;
+  } catch (e) {
+    for (const ucid of usedQuotaCoupons) {
+      releaseCouponQuota(ucid, course_id);
+    }
+    for (const vcid of usedCouponIds) {
+      db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [vcid]);
+    }
+    return res.status(500).json({ error: `报名异常：${e.message}，优惠名额已释放`, trace_id: trace });
+  }
+
+  if (!enrollSuccess) {
+    for (const ucid of usedQuotaCoupons) {
+      releaseCouponQuota(ucid, course_id);
+    }
+    for (const vcid of usedCouponIds) {
+      db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [vcid]);
+    }
+    return res.status(500).json({ error: '报名失败，优惠名额已释放', trace_id: trace });
+  }
+
+  addAuditLog('create_safe', 'enrollment', enrollId, student_name, operator || 'system', 'admin', null,
+    { course: course.name, final_fee: Math.max(0, (original_fee || course.fee || 0) - totalDiscount) });
+  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+    [trace, [trial_id, lead_id, course_id, contractId].filter(Boolean).join(',')]);
+
+  persist();
+  res.json({
+    id: enrollId,
+    contract_id: contractId,
+    trace_id: trace,
+    discount_applied: totalDiscount,
+    message: '安全报名成功，合同已生成'
+  });
+});
+
+app.post('/api/waitlists/safe-convert/:id', (req, res) => {
+  const { operator } = req.body;
+  const traceId = generateTraceId();
+  const waitlist = queryOne(`SELECT * FROM waitlists WHERE id = ? AND status = 'waiting'`, [req.params.id]);
+  if (!waitlist) {
+    return res.status(404).json({ error: '候补记录不存在或已处理', trace_id: traceId });
+  }
+
+  const allWaitlists = queryAll(
+    `SELECT * FROM waitlists WHERE course_id = ? AND status = 'waiting' ORDER BY sort_score DESC, created_at ASC`,
+    [waitlist.course_id]
+  );
+  const position = allWaitlists.findIndex(w => w.id === req.params.id) + 1;
+  if (position > 1) {
+    return res.status(400).json({
+      error: `违反候补优先规则：该学员排在第${position}位，不能越过第1位${allWaitlists[0]?.student_name || ''}转正`,
+      trace_id: traceId,
+      current_position: position,
+      ahead_student: allWaitlists[0] ? { name: allWaitlists[0].student_name, sort_score: allWaitlists[0].sort_score } : null
+    });
+  }
+
+  const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [waitlist.course_id]);
+  if (!course) {
+    return res.status(400).json({ error: '课程不存在', trace_id: traceId });
+  }
+  if (course.enrolled >= course.capacity) {
+    return res.status(400).json({ error: '课程仍满班，无法转正', trace_id: traceId });
+  }
+
+  const today = dayjs().format('YYYY-MM-DD');
+  if (waitlist.coupon_expire_date && waitlist.coupon_expire_date < today) {
+    return res.status(400).json({ error: '候补关联的优惠券已过期，需重新确认优惠', trace_id: traceId });
+  }
+
+  if (waitlist.has_discount_eligibility === 0 && waitlist.discount_amount > 0) {
+    return res.status(400).json({ error: '该学员优惠资格受限（老师反馈标记），请先联系教务调整后转正', trace_id: traceId });
+  }
+
+  const arrears = getUnpaidArrears(waitlist.lead_id, waitlist.student_name);
+  if (arrears.total > 0) {
+    return res.status(400).json({ error: `该学员存在历史欠费 ¥${arrears.total}，请先缴费清欠`, trace_id: traceId });
+  }
+
+  let couponConsumed = false;
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+
+  try {
+    if (waitlist.coupon_id) {
+      const coupon = queryOne(`SELECT * FROM coupons WHERE id = ? AND used = 'no'`, [waitlist.coupon_id]);
+      if (!coupon) {
+        return res.status(400).json({ error: '候补关联的优惠券已被占用，请重新确认优惠', trace_id: traceId });
+      }
+      const quotaCheck = checkCouponQuota(waitlist.coupon_id, waitlist.course_id);
+      if (!quotaCheck.valid) {
+        return res.status(400).json({ error: `优惠名额: ${quotaCheck.message}`, trace_id: traceId });
+      }
+      consumeCouponQuota(waitlist.coupon_id, waitlist.course_id);
+      db.run(`UPDATE coupons SET used = 'yes', status = 'used' WHERE id = ?`, [waitlist.coupon_id]);
+      const verify = queryOne(`SELECT used FROM coupons WHERE id = ?`, [waitlist.coupon_id]);
+      if (verify?.used !== 'yes') {
+        releaseCouponQuota(waitlist.coupon_id, waitlist.course_id);
+        return res.status(400).json({ error: '优惠券被并发占用，转正失败，优惠名额已释放', trace_id: traceId });
+      }
+      couponConsumed = true;
+    }
+
+    const enrollId = 'e' + uuidv4().slice(0, 8);
+    const origFee = course.fee || 0;
+    const finalDiscount = waitlist.has_discount_eligibility === 0 ? 0 : (waitlist.discount_amount || 0);
+    const finFee = Math.max(0, origFee - finalDiscount);
+
+    db.run(`INSERT INTO enrollments (id, trial_id, lead_id, student_name, course_id, course_name, campus_id, campus_name, coupon_id, coupon_code, discount_amount, original_fee, final_fee, operator, consultant, sales_attribution, status, approval_status, contract_id, refund_rule_id, created_at, updated_at, intention_trace)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enrolled', 'approved', NULL, 'rr001', ?, ?, ?)`,
+      [enrollId, waitlist.trial_id, waitlist.lead_id, waitlist.student_name,
+       waitlist.course_id, waitlist.course_name, waitlist.campus_id, waitlist.campus_name,
+       waitlist.has_discount_eligibility === 0 ? null : waitlist.coupon_id,
+       waitlist.has_discount_eligibility === 0 ? '' : waitlist.coupon_code, finalDiscount,
+       origFee, finFee, operator || waitlist.operator || 'system', waitlist.consultant || '',
+       waitlist.consultant || '', now, now,
+       `safe_converted_from_waitlist:${waitlist.id};position:${position};sort:${waitlist.sort_score}`]);
+
+    db.run(`UPDATE courses SET enrolled = enrolled + 1, status = CASE WHEN enrolled + 1 >= capacity THEN 'full' ELSE 'active' END WHERE id = ?`, [waitlist.course_id]);
+    db.run(`UPDATE waitlists SET status = 'converted', updated_at = ? WHERE id = ?`, [now, req.params.id]);
+
+    if (waitlist.lead_id) {
+      db.run(`UPDATE leads SET status = 'enrolled', updated_at = ? WHERE id = ?`, [now, waitlist.lead_id]);
+    }
+
+    const contractNo = 'HT' + dayjs().format('YYYYMM') + String(Math.floor(Math.random() * 9000) + 1000);
+    const contractId = 'ct' + uuidv4().slice(0, 6);
+    db.run(`INSERT INTO contracts (id, contract_no, enrollment_id, student_name, course_id, course_name, original_amount, discount_amount, final_amount, status, sign_date, effective_date, expire_date, signed_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'signed', ?, ?, ?, ?, ?)`,
+      [contractId, contractNo, enrollId, waitlist.student_name, waitlist.course_id, waitlist.course_name,
+       origFee, finalDiscount, finFee, now, now,
+       dayjs().add(365, 'day').format('YYYY-MM-DD'), operator || 'system', now]);
+    db.run(`UPDATE enrollments SET contract_id = ? WHERE id = ?`, [contractId, enrollId]);
+
+    updateWaitlistPositions(waitlist.course_id);
+
+    addAuditLog('safe_convert', 'waitlist', req.params.id, waitlist.student_name, operator || 'system', 'admin',
+      { status: 'waiting', position, sort_score: waitlist.sort_score },
+      { status: 'converted', enrollment_id: enrollId });
+    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+      [traceId, [waitlist.course_id, enrollId, contractId].filter(Boolean).join(',')]);
+
+    persist();
+    return res.json({
+      id: enrollId,
+      contract_id: contractId,
+      trace_id: traceId,
+      converted_position: position,
+      sort_score: waitlist.sort_score,
+      message: '候补安全转正成功（已校验优先规则）'
+    });
+  } catch (e) {
+    if (waitlist.coupon_id && couponConsumed) {
+      db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [waitlist.coupon_id]);
+      releaseCouponQuota(waitlist.coupon_id, waitlist.course_id);
+    }
+    return res.status(500).json({ error: `转正异常：${e.message}，优惠已释放`, trace_id: traceId });
+  }
+});
+
+app.get('/api/audit-trail/trace/:trace_id', (req, res) => {
+  const logs = queryAll(
+    `SELECT * FROM audit_logs WHERE trace_id = ? ORDER BY created_at ASC`,
+    [req.params.trace_id]
+  );
+  if (logs.length === 0) {
+    return res.status(404).json({ error: '未找到该链路的审计日志' });
+  }
+  const relatedIds = new Set();
+  logs.forEach(l => {
+    if (l.object_id) relatedIds.add(l.object_id);
+    if (l.related_object_ids) {
+      l.related_object_ids.split(',').filter(Boolean).forEach(id => relatedIds.add(id));
+    }
+  });
+  res.json({
+    trace_id: req.params.trace_id,
+    total_events: logs.length,
+    operators: [...new Set(logs.map(l => l.operator))].filter(Boolean),
+    modules: [...new Set(logs.map(l => l.module))].filter(Boolean),
+    time_range: {
+      first: logs[0]?.created_at,
+      last: logs[logs.length - 1]?.created_at,
+    },
+    related_object_ids: [...relatedIds],
+    events: logs.map(l => ({
+      time: l.created_at,
+      action: l.action,
+      module: l.module,
+      object: l.object_name,
+      operator: l.operator,
+      role: l.role,
+      old_value: l.old_value,
+      new_value: l.new_value,
+    }))
+  });
+});
+
+app.get('/api/audit-trail/student/:student_name', (req, res) => {
+  const { student_name } = req.params;
+  const logs = queryAll(
+    `SELECT * FROM audit_logs WHERE object_name LIKE ? ORDER BY created_at DESC LIMIT 200`,
+    [`%${student_name}%`]
+  );
+  const traces = [...new Set(logs.filter(l => l.trace_id).map(l => l.trace_id))];
+  const eventsByTrace = {};
+  traces.forEach(t => {
+    eventsByTrace[t] = logs.filter(l => l.trace_id === t).sort((a, b) => a.created_at.localeCompare(b.created_at));
+  });
+  res.json({
+    student_name,
+    total_events: logs.length,
+    unique_traces: traces.length,
+    traces: traces.map(t => ({
+      trace_id: t,
+      event_count: eventsByTrace[t].length,
+      first_event: eventsByTrace[t][0]?.created_at,
+      last_event: eventsByTrace[t][eventsByTrace[t].length - 1]?.created_at,
+      modules: [...new Set(eventsByTrace[t].map(e => e.module))].filter(Boolean)
+    })),
+    all_events: logs
+  });
+});
+
+app.get('/api/teacher-leaves/:id/impact', (req, res) => {
+  const leave = queryOne(`SELECT tl.*, t.name as teacher_name FROM teacher_leaves tl LEFT JOIN teachers t ON tl.teacher_id = t.id WHERE tl.id = ?`, [req.params.id]);
+  if (!leave) {
+    return res.status(404).json({ error: '请假记录不存在' });
+  }
+  const affectedTrials = queryAll(
+    `SELECT * FROM trials WHERE teacher_id = ? AND trial_date = ? AND (visit_status = 'pending' OR visit_status = 'visited')`,
+    [leave.teacher_id, leave.leave_date]
+  );
+  const affectedCourses = queryAll(
+    `SELECT * FROM courses WHERE teacher_id = ?`,
+    [leave.teacher_id]
+  );
+  const affectedEnrollments = queryAll(
+    `SELECT e.*, c.name as course_name FROM enrollments e LEFT JOIN courses c ON e.course_id = c.id WHERE c.teacher_id = ? AND e.status = 'enrolled'`,
+    [leave.teacher_id]
+  );
+  const traceId = generateTraceId();
+  addAuditLog('query', 'teacher_leave_impact', leave.id, leave.teacher_name, 'system', 'admin', null,
+    { leave_date: leave.leave_date, affected_trials: affectedTrials.length });
+  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+  persist();
+  res.json({
+    trace_id: traceId,
+    leave,
+    affected_trials: {
+      count: affectedTrials.length,
+      trials: affectedTrials.map(t => ({ id: t.id, student: t.student_name, status: t.visit_status }))
+    },
+    affected_courses: {
+      count: affectedCourses.length,
+      courses: affectedCourses.map(c => ({ id: c.id, name: c.name, enrolled: c.enrolled }))
+    },
+    affected_enrollments: {
+      count: affectedEnrollments.length,
+      enrollments: affectedEnrollments.map(e => ({ id: e.id, student: e.student_name, course: e.course_name }))
+    }
+  });
+});
+
+app.post('/api/waitlists/enhanced', (req, res) => {
+  const { trial_id, lead_id, student_name, course_id, coupon_id, coupon_code, discount_amount, operator, consultant, campus_id, campus_name, course_priority } = req.body;
+  const traceId = generateTraceId();
+
+  const today = dayjs().format('YYYY-MM-DD');
+  let couponExpire = null;
+  let hasDiscountEligibility = 1;
+  let feedbackPriorityScore = 0;
+  let teacherRecommendLevel = null;
+  let intentionLevel = 'normal';
+
+  if (coupon_id) {
+    const coupon = queryOne(`SELECT * FROM coupons WHERE id = ?`, [coupon_id]);
+    if (!coupon) {
+      return res.status(400).json({ error: '优惠券不存在', trace_id: traceId });
+    }
+    if (coupon.expire_date < today) {
+      return res.status(400).json({ error: '优惠券已过期，不能抵扣', trace_id: traceId });
+    }
+    couponExpire = coupon.expire_date;
+  }
+
+  if (trial_id) {
+    const feedback = queryOne(`SELECT * FROM feedbacks WHERE trial_id = ?`, [trial_id]);
+    if (feedback) {
+      hasDiscountEligibility = feedback.discount_eligibility === 'eligible' ? 1 : 0;
+      if (feedback.waitlist_priority_boost) {
+        feedbackPriorityScore = feedback.waitlist_priority_boost;
+      }
+      if (feedback.recommend_level) {
+        teacherRecommendLevel = feedback.recommend_level;
+      }
+    }
+  }
+
+  if (lead_id) {
+    const intention = queryOne(
+      `SELECT intention_level FROM course_intentions WHERE lead_id = ? AND course_id = ? AND status = 'active' LIMIT 1`,
+      [lead_id, course_id]
+    );
+    if (intention) {
+      intentionLevel = intention.intention_level;
+    }
+  }
+
+  const course = queryOne(`SELECT * FROM courses WHERE id = ?`, [course_id]);
+  if (!course) {
+    return res.status(400).json({ error: '课程不存在', trace_id: traceId });
+  }
+
+  const id = 'w' + uuidv4().slice(0, 8);
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const enrollTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const priority = course_priority || course.priority || 0;
+
+  const tempWaitlist = {
+    enroll_time: enrollTime,
+    course_priority: priority,
+    coupon_expire_date: couponExpire,
+    feedback_priority_score: feedbackPriorityScore,
+    teacher_recommend_level: teacherRecommendLevel,
+    has_discount_eligibility: hasDiscountEligibility,
+    intention_level: intentionLevel
+  };
+  const sortScore = calculateWaitlistSortScore(tempWaitlist);
+
+  db.run(`INSERT INTO waitlists (id, trial_id, lead_id, student_name, course_id, course_name, campus_id, campus_name, coupon_id, coupon_code, discount_amount, course_priority, enroll_time, coupon_expire_date, operator, consultant, status, position, sort_score, created_at, updated_at, feedback_priority_score, teacher_recommend_level, has_discount_eligibility, intention_level)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', 0, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, trial_id || null, lead_id || null, student_name, course_id, course.name,
+     campus_id || course.campus_id, campus_name || course.campus_name,
+     coupon_id || null, coupon_code || '', discount_amount || 0,
+     priority, enrollTime, couponExpire,
+     operator || 'system', consultant || '',
+     sortScore, now, now,
+     feedbackPriorityScore, teacherRecommendLevel, hasDiscountEligibility, intentionLevel]);
+
+  updateWaitlistPositions(course_id);
+
+  if (lead_id) {
+    db.run(`UPDATE leads SET status = 'waitlisted', updated_at = ? WHERE id = ?`, [now, lead_id]);
+  }
+
+  addAuditLog('create_enhanced', 'waitlist', id, student_name, operator || 'system', 'admin', null,
+    { sort_score: sortScore, teacher_recommend: teacherRecommendLevel, intention_level: intentionLevel, feedback_priority: feedbackPriorityScore });
+  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
+    [traceId, [lead_id, trial_id, course_id].filter(Boolean).join(',')]);
+
+  persist();
+
+  const updated = queryOne(`SELECT * FROM waitlists WHERE id = ?`, [id]);
+  res.json({
+    id,
+    trace_id: traceId,
+    position: updated.position,
+    sort_score: updated.sort_score,
+    sort_breakdown: {
+      enroll_time_priority: tempWaitlist.enroll_time ? Math.max(0, 30 - Math.floor((Date.now() - dayjs(enrollTime).valueOf()) / 86400000)) * 2 : 0,
+      course_priority: priority * 10,
+      coupon_urgency: couponExpire ? (dayjs(couponExpire).diff(dayjs(), 'day') < 7 ? 20 : (dayjs(couponExpire).diff(dayjs(), 'day') < 14 ? 10 : 0)) : 0,
+      feedback_boost: feedbackPriorityScore * 5,
+      teacher_recommend: ({ high: 30, medium: 15, low: 5 })[teacherRecommendLevel] || 0,
+      discount_eligibility: hasDiscountEligibility === 1 ? 5 : 0,
+      intention_level: ({ urgent: 25, high: 15, normal: 5 })[intentionLevel] || 0,
+    },
+    message: '已加入候补（已关联老师反馈和意向等级）'
+  });
 });
 
 const PORT = 3003;

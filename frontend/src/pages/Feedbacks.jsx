@@ -99,6 +99,7 @@ export default function Feedbacks({ role }) {
       const values = await form.validateFields();
       const trial = trials.find(t => t.id === values.trial_id);
       const avgScore = calcAverageScore(values.dimensions);
+      const recommendCourse = values.recommend_course_id ? trials.find(t => t.course_id === values.recommend_course_id) : null;
       await axios.post('/api/feedbacks', {
         trial_id: values.trial_id,
         overall_score: values.overall_score || avgScore,
@@ -107,12 +108,18 @@ export default function Feedbacks({ role }) {
         weaknesses: values.weaknesses,
         suggestions: values.suggestions,
         recommendation_level: values.recommendation_level,
+        recommend_course_id: values.recommend_course_id || null,
+        recommend_course_type: values.recommend_course_type || null,
+        recommend_course_name: recommendCourse?.course_name || null,
+        discount_eligibility: values.discount_eligibility || 'eligible',
+        discount_eligibility_reason: values.discount_eligibility === 'eligible' ? null : values.discount_eligibility_reason,
+        waitlist_priority_boost: values.waitlist_priority_boost || 0,
         student_name: trial?.student_name,
         course_name: trial?.course_name,
         teacher: values.teacher,
         trial_date: trial?.trial_date,
       });
-      message.success('反馈提交成功');
+      message.success('反馈提交成功，推荐班型、优惠资格和候补优先级已同步');
       setModalOpen(false);
       form.resetFields();
       load();
@@ -292,6 +299,45 @@ export default function Feedbacks({ role }) {
             <Divider orientation="left">推荐等级</Divider>
             <div>{getRecommendationTag(currentFeedback.recommendation_level)}</div>
 
+            <Divider orientation="left">报名影响因素</Divider>
+            <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="推荐班型">
+                {currentFeedback.recommend_course_name || currentFeedback.recommend_course_type || (
+                  <span style={{ color: '#999' }}>默认跟随试听课程</span>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="优惠资格">
+                {currentFeedback.discount_eligibility === 'eligible' ? (
+                  <Tag color="green">正常</Tag>
+                ) : currentFeedback.discount_eligibility ? (
+                  <div>
+                    <Tag color="red">受限</Tag>
+                    {currentFeedback.discount_eligibility_reason && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                        原因：{currentFeedback.discount_eligibility_reason}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Tag color="green">正常</Tag>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="候补优先级加成">
+                {currentFeedback.waitlist_priority_boost ? (
+                  <span style={{ color: '#1677ff', fontWeight: 'bold' }}>
+                    +{currentFeedback.waitlist_priority_boost * 5} 分
+                  </span>
+                ) : (
+                  <span style={{ color: '#999' }}>无加成</span>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="推荐等级分值">
+                <span style={{ color: '#1677ff', fontWeight: 'bold' }}>
+                  +{{strongly_recommend: 30, recommend: 25, average: 15, not_recommend: 5}[currentFeedback.recommendation_level] || 0} 分
+                </span>
+              </Descriptions.Item>
+            </Descriptions>
+
             <Divider orientation="left">反馈详情</Divider>
             <div style={{ marginBottom: 12 }}>
               <div style={{ color: '#52c41a', fontWeight: 500, marginBottom: 4 }}>优点：</div>
@@ -367,6 +413,80 @@ export default function Feedbacks({ role }) {
               <Rate />
             </Form.Item>
           ))}
+
+          <Divider orientation="left">报名影响设置</Divider>
+          <Alert
+            message="以下设置将直接影响学员的报名资格、推荐班型和候补排序优先级"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="recommend_course_type" label="推荐班型">
+                <Select
+                  placeholder="选择推荐班型（可选）"
+                  allowClear
+                  options={[
+                    { label: '基础班', value: 'basic' },
+                    { label: '提高班', value: 'advanced' },
+                    { label: '精英班', value: 'elite' },
+                    { label: '一对一', value: 'one_on_one' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="waitlist_priority_boost" label="候补优先级加成">
+                <Select
+                  placeholder="选择优先级加成（可选）"
+                  allowClear
+                  options={[
+                    { label: '不加成', value: 0 },
+                    { label: '+5分（轻微加成）', value: 1 },
+                    { label: '+10分（中等加成）', value: 2 },
+                    { label: '+15分（较高加成）', value: 3 },
+                    { label: '+20分（高加成）', value: 4 },
+                    { label: '+25分（极高加成）', value: 5 },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="discount_eligibility" label="优惠资格" initialValue="eligible">
+                <Select
+                  placeholder="选择优惠资格"
+                  options={[
+                    { label: '正常（可使用优惠）', value: 'eligible' },
+                    { label: '受限（不可使用优惠）', value: 'restricted' },
+                    { label: '需审批（优惠需审核）', value: 'need_approval' },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                noStyle
+                shouldUpdate={(prev, curr) => prev.discount_eligibility !== curr.discount_eligibility}
+              >
+                {({ getFieldValue }) => {
+                  const eligibility = getFieldValue('discount_eligibility');
+                  if (eligibility === 'eligible') return null;
+                  return (
+                    <Form.Item
+                      name="discount_eligibility_reason"
+                      label="受限原因"
+                      rules={[{ required: true, message: '请输入受限原因' }]}
+                    >
+                      <Input.TextArea rows={1} placeholder="请说明优惠资格受限的原因" />
+                    </Form.Item>
+                  );
+                }}
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Divider orientation="left">反馈内容</Divider>
           <Form.Item name="strengths" label="优点" rules={[{ required: true, message: '请输入优点' }]}>

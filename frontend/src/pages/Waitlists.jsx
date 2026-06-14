@@ -68,7 +68,7 @@ export default function Waitlists({ role }) {
       const coupon = values.coupon_id ? coupons.find(c => c.id === values.coupon_id) : null;
       const course = courses.find(c => c.id === values.course_id);
 
-      await axios.post('/api/waitlists', {
+      const res = await axios.post('/api/waitlists/enhanced', {
         trial_id: values.trial_id,
         lead_id: trial?.lead_id,
         student_name: trial?.student_name,
@@ -79,34 +79,52 @@ export default function Waitlists({ role }) {
         coupon_id: values.coupon_id || null,
         coupon_code: coupon?.code || null,
         discount_amount: coupon ? coupon.amount : 0,
-        coupon_expire_date: coupon?.expire_date,
         operator: '教务张老师',
         consultant: trial?.consultant,
       });
-      message.success('已加入候补列表');
+      const data = res.data;
+      const posText = data.position ? `当前排名第 ${data.position} 位` : '';
+      const scoreText = data.sort_score ? `，排序分数 ${data.sort_score.toFixed(1)}` : '';
+      message.success(`已加入候补列表${posText}${scoreText}，审计链路: ${data.trace_id}`);
       setModalOpen(false);
       form.resetFields();
       load();
     } catch (e) {
-      message.error(e.response?.data?.error || '操作失败');
+      const errMsg = e.response?.data?.error || '操作失败';
+      const traceId = e.response?.data?.trace_id;
+      message.error(traceId ? `${errMsg} (链路: ${traceId})` : errMsg);
     }
   };
 
   const handleConvert = async (id) => {
     try {
+      const waitlist = waitlists.find(w => w.id === id);
+      const position = waitlist?.position;
+      let content = '确定要将该候补学员转为正式学员吗？';
+      if (position && position > 1) {
+        content = `⚠️ 该学员当前排在第 ${position} 位，不是第一位。系统会自动校验优先规则，确定要尝试转正吗？`;
+      }
       Modal.confirm({
         title: '确认转正',
-        content: '确定要将该候补学员转为正式学员吗？',
+        content: content,
         okText: '确认转正',
         cancelText: '取消',
         onOk: async () => {
-          await axios.post(`/api/waitlists/${id}/convert`, { operator: '教务张老师' });
-          message.success('候补转正成功！');
+          const res = await axios.post(`/api/waitlists/safe-convert/${id}`, { operator: '教务张老师' });
+          message.success(`候补转正成功！排名第 ${res.data.converted_position} 位，审计链路: ${res.data.trace_id}`);
           load();
         },
       });
     } catch (e) {
-      message.error(e.response?.data?.error || '转正失败');
+      const errMsg = e.response?.data?.error || '转正失败';
+      const traceId = e.response?.data?.trace_id;
+      const currentPos = e.response?.data?.current_position;
+      const aheadStudent = e.response?.data?.ahead_student;
+      let fullMsg = errMsg;
+      if (currentPos && aheadStudent) {
+        fullMsg = `${errMsg}。前面还有 ${aheadStudent.name}（分数 ${aheadStudent.sort_score.toFixed(1)}）`;
+      }
+      message.error(traceId ? `${fullMsg} (链路: ${traceId})` : fullMsg);
     }
   };
 
@@ -493,6 +511,51 @@ export default function Waitlists({ role }) {
               </Descriptions.Item>
             </Descriptions>
 
+            <Divider orientation="left" style={{ margin: '16px 0' }}>排序分数明细</Divider>
+            <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="老师推荐等级">
+                {detailRecord.teacher_recommend_level ? (
+                  <Tag color={
+                    detailRecord.teacher_recommend_level === 'high' ? 'red' :
+                    detailRecord.teacher_recommend_level === 'medium' ? 'orange' :
+                    detailRecord.teacher_recommend_level === 'low' ? 'default' : 'blue'
+                  }>
+                    {{high: '高推荐', medium: '中推荐', low: '低推荐', strongly_recommend: '强烈推荐'}[detailRecord.teacher_recommend_level] || detailRecord.teacher_recommend_level}
+                  </Tag>
+                ) : (
+                  <span style={{ color: '#999' }}>暂无</span>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="意向等级">
+                {detailRecord.intention_level ? (
+                  <Tag color={
+                    detailRecord.intention_level === 'urgent' ? 'red' :
+                    detailRecord.intention_level === 'high' ? 'orange' : 'default'
+                  }>
+                    {{urgent: '紧急', high: '高意向', normal: '普通'}[detailRecord.intention_level] || detailRecord.intention_level}
+                  </Tag>
+                ) : (
+                  <span style={{ color: '#999' }}>普通</span>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="老师反馈优先级加成">
+                {detailRecord.feedback_priority_score ? (
+                  <span style={{ color: '#1677ff', fontWeight: 'bold' }}>
+                    +{detailRecord.feedback_priority_score * 5} 分
+                  </span>
+                ) : (
+                  <span style={{ color: '#999' }}>无</span>
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label="优惠资格">
+                {detailRecord.has_discount_eligibility === 0 ? (
+                  <Tag color="red">受限</Tag>
+                ) : (
+                  <Tag color="green">正常</Tag>
+                )}
+              </Descriptions.Item>
+            </Descriptions>
+
             <Divider orientation="left" style={{ margin: '16px 0' }}>优惠信息</Divider>
             <Descriptions bordered column={2} size="small" style={{ marginBottom: 16 }}>
               <Descriptions.Item label="优惠券码">
@@ -614,6 +677,40 @@ export default function Waitlists({ role }) {
               <span style={{ color: '#666', fontSize: 12 }}>
                 目的：优先处理优惠即将过期的学员，减少优惠流失
               </span>
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>老师推荐等级（最高30分）：</strong>
+              <br />
+              老师在反馈中给出的推荐等级：
+              <ul style={{ paddingLeft: 20 }}>
+                <li>强烈推荐/高推荐：加 25-30 分</li>
+                <li>中推荐：加 15 分</li>
+                <li>低推荐：加 5 分</li>
+              </ul>
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>老师反馈优先级加成（无上限）：</strong>
+              <br />
+              老师在反馈中标记的候补优先级加成 × 5分。
+              <br />
+              <span style={{ color: '#666', fontSize: 12 }}>
+                例如：加成值为3，则额外加 15 分
+              </span>
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>意向等级（最高25分）：</strong>
+              <br />
+              家长意向等级：
+              <ul style={{ paddingLeft: 20 }}>
+                <li>紧急：加 25 分</li>
+                <li>高意向：加 15 分</li>
+                <li>普通：加 5 分</li>
+              </ul>
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>优惠资格（+5分）：</strong>
+              <br />
+              老师标记为优惠资格正常的学员加 5 分。
             </li>
           </ul>
 

@@ -92,8 +92,10 @@ export default function Enrollments({ role }) {
       const values = await form.validateFields(['trial_id', 'course_id']);
       const couponIds = form.getFieldValue('coupon_ids') || [];
       const trial = trials.find(t => t.id === values.trial_id);
-      const res = await axios.post('/api/enrollments/check', {
+      const res = await axios.post('/api/enrollments/check-enhanced', {
         trial_id: values.trial_id,
+        lead_id: trial?.lead_id,
+        student_name: trial?.student_name,
         course_id: values.course_id,
         coupon_ids: couponIds,
       });
@@ -117,7 +119,7 @@ export default function Enrollments({ role }) {
       const discount_amount = stackResult?.total_discount || 0;
       const final_fee = original_fee - discount_amount;
 
-      await axios.post('/api/enrollments', {
+      const res = await axios.post('/api/enrollments/safe-create', {
         trial_id: values.trial_id,
         lead_id: trial?.lead_id,
         student_name: trial?.student_name,
@@ -135,15 +137,18 @@ export default function Enrollments({ role }) {
         package_id: course?.package_id,
         package_name: course?.package_name,
         refund_rule_id: values.refund_rule_id,
+        trace_id: checkResult?.trace_id,
       });
-      message.success('报名成功！合同已生成');
+      message.success(`报名成功！合同已生成，审计链路: ${res.data.trace_id}`);
       setModalOpen(false);
       setCheckResult(null);
       setStackResult(null);
       form.resetFields();
       load();
     } catch (e) {
-      message.error(e.response?.data?.error || '报名失败');
+      const errMsg = e.response?.data?.error || '报名失败';
+      const traceId = e.response?.data?.trace_id;
+      message.error(traceId ? `${errMsg} (链路: ${traceId})` : errMsg);
     }
   };
 
@@ -501,6 +506,24 @@ export default function Enrollments({ role }) {
 
         {checkResult && (
           <div style={{ marginTop: 16 }}>
+            {checkResult.trace_id && (
+              <Alert
+                type="info"
+                showIcon
+                message={`审计链路: ${checkResult.trace_id}`}
+                description="该编号可用于后续审计追踪"
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            {checkResult.info && checkResult.info.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                {checkResult.info.map((info, i) => (
+                  <div key={i} style={{ color: '#52c41a', fontSize: 13, marginBottom: 4 }}>
+                    {info}
+                  </div>
+                ))}
+              </div>
+            )}
             {checkResult.errors && checkResult.errors.length > 0 && (
               <Result
                 status="error"
@@ -511,7 +534,7 @@ export default function Enrollments({ role }) {
             {checkResult.warnings && checkResult.warnings.length > 0 && checkResult.errors.length === 0 && (
               <Result
                 status="warning"
-                title="课程已满班，建议加入候补"
+                title={checkResult.is_waitlist ? '课程已满班，建议加入候补' : '有需要注意的事项'}
                 subTitle={checkResult.warnings.map((w, i) => <div key={i}><WarningOutlined style={{ color: '#faad14' }} /> {w}</div>)}
               />
             )}
