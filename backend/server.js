@@ -629,17 +629,22 @@ function queryOne(sql, params = []) {
   return rows[0] || null;
 }
 
-function addAuditLog(action, module, objectId, objectName, operator, role, oldValue, newValue) {
+function addAuditLog(action, module, objectId, objectName, operator, role, oldValue, newValue, traceId, relatedObjectIds) {
   const id = 'a' + uuidv4().slice(0, 8);
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const relatedIdsStr = Array.isArray(relatedObjectIds)
+    ? relatedObjectIds.filter(Boolean).join(',')
+    : (relatedObjectIds || null);
   db.run(`INSERT INTO audit_logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
     id, action, module, objectId, objectName || '', operator || 'system', role || '', 
     oldValue ? JSON.stringify(oldValue) : '',
     newValue ? JSON.stringify(newValue) : '',
     '',
     now,
-    null, null
+    traceId || null,
+    relatedIdsStr
   ]);
+  return id;
 }
 
 function createLeadVersion(leadId, changedBy, changeReason) {
@@ -2128,8 +2133,7 @@ app.post('/api/follow-up-records', (req, res) => {
 
   const traceId = generateTraceId();
   addAuditLog('create', 'follow_up_record', id, '', follow_up_by || 'consultant', 'consultant', null,
-    { lead_id, follow_date, intention_level });
-  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+    { lead_id, follow_date, intention_level }, traceId, [lead_id]);
 
   persist();
   res.json({ id, trace_id: traceId, message: '跟进记录已保存' });
@@ -2161,9 +2165,8 @@ app.post('/api/referrals', (req, res) => {
   if (referrer_lead_id) {
     const traceId = generateTraceId();
     addAuditLog('create', 'referral', id, referred_student_name || '', created_by || 'consultant', 'consultant', null,
-      { referrer: referrer_student_name, referred: referred_student_name });
-    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-      [traceId, [referrer_lead_id, referred_lead_id].filter(Boolean).join(',')]);
+      { referrer: referrer_student_name, referred: referred_student_name },
+      traceId, [referrer_lead_id, referred_lead_id]);
   }
 
   persist();
@@ -2223,8 +2226,7 @@ app.post('/api/intention-changes', (req, res) => {
 
   const traceId = generateTraceId();
   addAuditLog('create', 'intention_change', id, student_name || '', changed_by || 'consultant', change_source || 'consultant',
-    { old_course_id, old_intention }, { new_course_id, new_intention });
-  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+    { old_course_id, old_intention }, { new_course_id, new_intention }, traceId, [lead_id]);
 
   persist();
   res.json({ id, trace_id: traceId, message: '意向变更已记录' });
@@ -2255,8 +2257,7 @@ app.post('/api/course-intentions', (req, res) => {
 
   const traceId = generateTraceId();
   addAuditLog('create', 'course_intention', id, student_name || '', created_by || 'consultant', 'consultant',
-    null, { course_id, course_name, intention_level });
-  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+    null, { course_id, course_name, intention_level }, traceId, [lead_id, course_id]);
 
   persist();
   res.json({ id, trace_id: traceId, message: '课程意向已添加' });
@@ -2313,9 +2314,7 @@ app.post('/api/fee-arrears', (req, res) => {
 
   const traceId = generateTraceId();
   addAuditLog('create', 'fee_arrears', id, student_name, created_by || 'finance', 'finance', null,
-    { arrears_amount, course_name, due_date });
-  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-    [traceId, [lead_id, enrollment_id].filter(Boolean).join(',')]);
+    { arrears_amount, course_name, due_date }, traceId, [lead_id, enrollment_id]);
 
   persist();
   res.json({ id, trace_id: traceId, message: '欠费记录已创建' });
@@ -2364,6 +2363,7 @@ app.post('/api/class-drop-records', (req, res) => {
   const id = 'cd' + uuidv4().slice(0, 8);
   const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
   const traceId = generateTraceId();
+  const relatedIds = [];
 
   db.run(`INSERT INTO class_drop_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [id, enrollment_id, student_name || '', course_id || null, course_name || '',
@@ -2372,6 +2372,7 @@ app.post('/api/class-drop-records', (req, res) => {
 
   const enrollment = queryOne(`SELECT * FROM enrollments WHERE id = ? AND status = 'enrolled'`, [enrollment_id]);
   if (enrollment) {
+    relatedIds.push(enrollment_id, id, enrollment.course_id);
     const oldCouponIds = enrollment.coupon_ids ? enrollment.coupon_ids.split(',') : [];
     const usedCouponId = enrollment.coupon_id;
 
@@ -2383,17 +2384,27 @@ app.post('/api/class-drop-records', (req, res) => {
     if (usedCouponId) {
       db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [usedCouponId]);
       releaseCouponQuota(usedCouponId, cid);
+      relatedIds.push(usedCouponId);
     }
     oldCouponIds.forEach(cid2 => {
       if (cid2 && cid2 !== usedCouponId) {
         db.run(`UPDATE coupons SET used = 'no', status = 'active' WHERE id = ?`, [cid2]);
         releaseCouponQuota(cid2, cid);
+        relatedIds.push(cid2);
       }
     });
 
     if (enrollment.lead_id) {
       db.run(`UPDATE leads SET status = 'dropped', updated_at = ? WHERE id = ?`, [now, enrollment.lead_id]);
+      relatedIds.push(enrollment.lead_id);
     }
+
+    addAuditLog('drop', 'enrollment', enrollment_id, enrollment.student_name, operator || 'system', 'admin',
+      { status: 'enrolled' }, { status: 'dropped', refund_amount: refund_amount || 0 }, traceId, relatedIds);
+    addAuditLog('create', 'class_drop_record', id, enrollment.student_name, operator || 'system', 'admin',
+      null, { drop_reason: drop_reason || '', refund_amount: refund_amount || 0 }, traceId, relatedIds);
+    addAuditLog('release_seat', 'course', cid, course_name || enrollment.course_name, operator || 'system', 'admin',
+      null, { released_seats: 1, trigger: 'class_drop' }, traceId, relatedIds);
 
     let autoConverted = [];
     if (auto_trigger_waitlist !== false && auto_trigger_waitlist !== 0) {
@@ -2417,6 +2428,8 @@ app.post('/api/class-drop-records', (req, res) => {
         const finalDiscount = w.has_discount_eligibility === 0 ? 0 : (w.discount_amount || 0);
         const finalFinFee = Math.max(0, origFee - finalDiscount);
 
+        const waitlistRelatedIds = [...relatedIds, w.id, enrollId, w.lead_id, w.trial_id];
+
         db.run(`INSERT INTO enrollments (id, trial_id, lead_id, student_name, course_id, course_name, campus_id, campus_name, coupon_id, coupon_code, discount_amount, original_fee, final_fee, operator, consultant, sales_attribution, status, approval_status, created_at, updated_at, intention_trace)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enrolled', 'approved', ?, ?, ?)`,
           [enrollId, w.trial_id, w.lead_id, w.student_name, w.course_id, w.course_name,
@@ -2431,6 +2444,7 @@ app.post('/api/class-drop-records', (req, res) => {
         if (w.coupon_id && w.has_discount_eligibility !== 0) {
           db.run(`UPDATE coupons SET used = 'yes', status = 'used' WHERE id = ?`, [w.coupon_id]);
           consumeCouponQuota(w.coupon_id, cid);
+          waitlistRelatedIds.push(w.coupon_id);
         }
         if (w.lead_id) {
           db.run(`UPDATE leads SET status = 'enrolled', updated_at = ? WHERE id = ?`, [now, w.lead_id]);
@@ -2444,16 +2458,21 @@ app.post('/api/class-drop-records', (req, res) => {
            origFee, finalDiscount, finalFinFee, now, now,
            dayjs().add(365, 'day').format('YYYY-MM-DD'), operator || 'system', now]);
         db.run(`UPDATE enrollments SET contract_id = ? WHERE id = ?`, [contractId, enrollId]);
+        waitlistRelatedIds.push(contractId);
 
-        autoConverted.push({ id: enrollId, student_name: w.student_name, waitlist_id: w.id });
+        addAuditLog('auto_convert', 'waitlist', w.id, w.student_name, operator || 'system', 'admin',
+          { status: 'waiting' }, { status: 'converted', enrollment_id: enrollId, sort_score: w.sort_score }, traceId, waitlistRelatedIds);
+        addAuditLog('create', 'enrollment', enrollId, w.student_name, operator || 'system', 'admin',
+          null, { source: 'waitlist_auto_convert', original_fee: origFee, final_fee: finalFinFee, discount: finalDiscount, consultant: w.consultant || '' }, traceId, waitlistRelatedIds);
+        addAuditLog('create', 'contract', contractId, w.student_name, operator || 'system', 'admin',
+          null, { contract_no: contractNo, enrollment_id: enrollId, final_amount: finalFinFee }, traceId, waitlistRelatedIds);
+        addAuditLog('update', 'sales_attribution', w.lead_id || enrollId, w.student_name, operator || 'system', 'admin',
+          null, { consultant: w.consultant || '', source: 'waitlist_auto_convert', trigger: 'class_drop' }, traceId, waitlistRelatedIds);
+
+        autoConverted.push({ id: enrollId, student_name: w.student_name, waitlist_id: w.id, contract_id: contractId });
       }
       updateWaitlistPositions(cid);
     }
-
-    addAuditLog('drop', 'enrollment', enrollment_id, enrollment.student_name, operator || 'system', 'admin',
-      { status: 'enrolled' }, { status: 'dropped', refund_amount: refund_amount || 0 });
-    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-      [traceId, [course_id, id].filter(Boolean).join(',')]);
 
     persist();
     return res.json({
@@ -2558,8 +2577,8 @@ app.post('/api/trials/:id/reschedule', (req, res) => {
 
   addAuditLog('reschedule', 'trial', trial.id, trial.student_name, operator || 'consultant', 'consultant',
     { trial_date: trial.trial_date, campus_id: trial.campus_id, teacher_id: trial.teacher_id },
-    { trial_date: new_trial_date, campus_id: new_campus_id || trial.campus_id, teacher_id: finalTeacherId, reschedule_count: newCount });
-  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+    { trial_date: new_trial_date, campus_id: new_campus_id || trial.campus_id, teacher_id: finalTeacherId, reschedule_count: newCount },
+    traceId, [trial.id, trial.lead_id, new_campus_id || trial.campus_id]);
 
   persist();
   res.json({
@@ -2860,9 +2879,11 @@ app.post('/api/enrollments/safe-create', (req, res) => {
   }
 
   addAuditLog('create_safe', 'enrollment', enrollId, student_name, operator || 'system', 'admin', null,
-    { course: course.name, final_fee: Math.max(0, (original_fee || course.fee || 0) - totalDiscount) });
-  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-    [trace, [trial_id, lead_id, course_id, contractId].filter(Boolean).join(',')]);
+    { course: course.name, final_fee: Math.max(0, (original_fee || course.fee || 0) - totalDiscount) },
+    trace, [trial_id, lead_id, course_id, contractId]);
+  addAuditLog('create', 'contract', contractId, student_name, operator || 'system', 'admin', null,
+    { enrollment_id: enrollId, final_amount: Math.max(0, (original_fee || course.fee || 0) - totalDiscount) },
+    trace, [trial_id, lead_id, course_id, enrollId]);
 
   persist();
   res.json({
@@ -2974,11 +2995,14 @@ app.post('/api/waitlists/safe-convert/:id', (req, res) => {
 
     updateWaitlistPositions(waitlist.course_id);
 
+    const relatedIds = [waitlist.course_id, enrollId, contractId, waitlist.id, waitlist.lead_id, waitlist.trial_id];
     addAuditLog('safe_convert', 'waitlist', req.params.id, waitlist.student_name, operator || 'system', 'admin',
       { status: 'waiting', position, sort_score: waitlist.sort_score },
-      { status: 'converted', enrollment_id: enrollId });
-    db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-      [traceId, [waitlist.course_id, enrollId, contractId].filter(Boolean).join(',')]);
+      { status: 'converted', enrollment_id: enrollId }, traceId, relatedIds);
+    addAuditLog('create', 'enrollment', enrollId, waitlist.student_name, operator || 'system', 'admin',
+      null, { source: 'waitlist_safe_convert', final_fee: finFee, discount: finalDiscount }, traceId, relatedIds);
+    addAuditLog('create', 'contract', contractId, waitlist.student_name, operator || 'system', 'admin',
+      null, { contract_no: contractNo, enrollment_id: enrollId, final_amount: finFee }, traceId, relatedIds);
 
     persist();
     return res.json({
@@ -3000,41 +3024,97 @@ app.post('/api/waitlists/safe-convert/:id', (req, res) => {
 
 app.get('/api/audit-trail/trace/:trace_id', (req, res) => {
   const logs = queryAll(
-    `SELECT * FROM audit_logs WHERE trace_id = ? ORDER BY created_at ASC`,
+    `SELECT * FROM audit_logs WHERE trace_id = ? ORDER BY created_at ASC, id ASC`,
     [req.params.trace_id]
   );
   if (logs.length === 0) {
     return res.status(404).json({ error: '未找到该链路的审计日志' });
   }
   const relatedIds = new Set();
+  const operatorRoles = {};
   logs.forEach(l => {
     if (l.object_id) relatedIds.add(l.object_id);
     if (l.related_object_ids) {
       l.related_object_ids.split(',').filter(Boolean).forEach(id => relatedIds.add(id));
     }
+    if (l.operator) {
+      operatorRoles[l.operator] = l.role;
+    }
   });
+  const parseJson = (s) => {
+    if (!s) return null;
+    try { return JSON.parse(s); } catch (e) { return s; }
+  };
   res.json({
     trace_id: req.params.trace_id,
     total_events: logs.length,
     operators: [...new Set(logs.map(l => l.operator))].filter(Boolean),
+    operator_details: Object.entries(operatorRoles).map(([name, role]) => ({ name, role })),
     modules: [...new Set(logs.map(l => l.module))].filter(Boolean),
+    action_types: [...new Set(logs.map(l => l.action))].filter(Boolean),
+    object_types: [...new Set(logs.map(l => l.module))].filter(Boolean),
     time_range: {
       first: logs[0]?.created_at,
       last: logs[logs.length - 1]?.created_at,
+      duration_seconds: logs[0] && logs[logs.length - 1]
+        ? Math.max(0, Math.floor((dayjs(logs[logs.length - 1].created_at).valueOf() - dayjs(logs[0].created_at).valueOf()) / 1000))
+        : 0,
     },
     related_object_ids: [...relatedIds],
-    events: logs.map(l => ({
+    summary: {
+      create_count: logs.filter(l => l.action && l.action.startsWith('create')).length,
+      update_count: logs.filter(l => l.action === 'update' || l.action === 'drop' || l.action === 'reschedule').length,
+      query_count: logs.filter(l => l.action === 'query').length,
+      auto_convert_count: logs.filter(l => l.action && l.action.includes('convert')).length,
+    },
+    events: logs.map((l, idx) => ({
+      sequence: idx + 1,
       time: l.created_at,
       action: l.action,
       module: l.module,
-      object: l.object_name,
+      object_id: l.object_id,
+      object_name: l.object_name,
       operator: l.operator,
       role: l.role,
-      old_value: l.old_value,
-      new_value: l.new_value,
+      old_value: parseJson(l.old_value),
+      new_value: parseJson(l.new_value),
+      related_object_ids: l.related_object_ids ? l.related_object_ids.split(',').filter(Boolean) : [],
+      description: buildAuditEventDescription(l, parseJson),
+    })),
+    event_flow: logs.map((l, idx) => ({
+      step: idx + 1,
+      label: `${l.action || 'event'} on ${l.module || 'unknown'}`,
+      operator: l.operator,
+      target: l.object_name || l.object_id,
+      timestamp: l.created_at,
     }))
   });
 });
+
+function buildAuditEventDescription(l, parseJson) {
+  const nv = parseJson(l.new_value);
+  const ov = parseJson(l.old_value);
+  const who = l.operator ? `${l.operator}(${l.role || ''})` : 'system';
+  const what = `${l.action || '操作'} ${l.module || '模块'}`;
+  const whom = l.object_name ? `「${l.object_name}」` : (l.object_id || '');
+  let detail = '';
+  if (l.module === 'enrollment' && l.action === 'drop') {
+    detail = `退费 ¥${nv?.refund_amount || 0}`;
+  } else if (l.module === 'waitlist' && l.action?.includes('convert')) {
+    detail = nv?.enrollment_id ? `生成报名单: ${nv.enrollment_id}` : '';
+  } else if (l.module === 'contract' && l.action === 'create') {
+    detail = `合同号: ${nv?.contract_no || ''}, 金额: ¥${nv?.final_amount || 0}`;
+  } else if (l.module === 'course' && l.action === 'release_seat') {
+    detail = `释放 ${nv?.released_seats || 1} 个名额, 触发: ${nv?.trigger || ''}`;
+  } else if (l.module === 'enrollment' && l.action?.includes('safe') || l.action === 'create') {
+    detail = `实付: ¥${nv?.final_fee || 0}, 优惠: ¥${nv?.discount || 0}`;
+  } else if (l.action === 'create' && l.module === 'waitlist') {
+    detail = `排序分: ${nv?.sort_score || 0}`;
+  } else if (l.action === 'reschedule') {
+    detail = `${ov?.trial_date || ''} → ${nv?.trial_date || ''}`;
+  }
+  return `${who} ${what} ${whom} ${detail}`.trim();
+}
 
 app.get('/api/audit-trail/student/:student_name', (req, res) => {
   const { student_name } = req.params;
@@ -3081,8 +3161,8 @@ app.get('/api/teacher-leaves/:id/impact', (req, res) => {
   );
   const traceId = generateTraceId();
   addAuditLog('query', 'teacher_leave_impact', leave.id, leave.teacher_name, 'system', 'admin', null,
-    { leave_date: leave.leave_date, affected_trials: affectedTrials.length });
-  db.run(`UPDATE audit_logs SET trace_id = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`, [traceId]);
+    { leave_date: leave.leave_date, affected_trials: affectedTrials.length },
+    traceId, [leave.teacher_id, leave.leave_date]);
   persist();
   res.json({
     trace_id: traceId,
@@ -3185,9 +3265,8 @@ app.post('/api/waitlists/enhanced', (req, res) => {
   }
 
   addAuditLog('create_enhanced', 'waitlist', id, student_name, operator || 'system', 'admin', null,
-    { sort_score: sortScore, teacher_recommend: teacherRecommendLevel, intention_level: intentionLevel, feedback_priority: feedbackPriorityScore });
-  db.run(`UPDATE audit_logs SET trace_id = ?, related_object_ids = ? WHERE id = (SELECT id FROM audit_logs ORDER BY created_at DESC LIMIT 1)`,
-    [traceId, [lead_id, trial_id, course_id].filter(Boolean).join(',')]);
+    { sort_score: sortScore, teacher_recommend: teacherRecommendLevel, intention_level: intentionLevel, feedback_priority: feedbackPriorityScore },
+    traceId, [lead_id, trial_id, course_id]);
 
   persist();
 
